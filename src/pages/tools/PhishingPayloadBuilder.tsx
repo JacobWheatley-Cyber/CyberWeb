@@ -4,7 +4,7 @@ import {
   Link2, ExternalLink, Trash2, Copy, CheckCheck, Globe, Monitor,
   Smartphone, Clock, Wifi, WifiOff, Cpu, MemoryStick, Eye, KeyRound,
   ChevronDown, ChevronRight, Fish, Plus, RefreshCw, AlertTriangle,
-  Radio, Shield, Layers,
+  Radio, Shield, Layers, Zap, X, Pencil,
 } from 'lucide-react'
 import clsx from 'clsx'
 
@@ -278,11 +278,12 @@ function CaptureCard({ capture, highlight }: { capture: Capture; highlight?: boo
 
 // ── Campaign card ─────────────────────────────────────────────────────────────
 
-function CampaignCard({ campaign, selected, onSelect, onDelete }: {
-  campaign: Campaign; selected: boolean
+function CampaignCard({ campaign, selected, baseUrl, onSelect, onDelete }: {
+  campaign: Campaign; selected: boolean; baseUrl: string
   onSelect: () => void; onDelete: () => void
 }) {
-  const link = `${API}/${campaign.slug}`
+  const origin = baseUrl.replace(/\/+$/, '') || API
+  const link   = `${origin}/${campaign.slug}`
 
   return (
     <motion.div
@@ -531,6 +532,135 @@ function NewCampaignForm({ onCreated }: { onCreated: (c: Campaign) => void }) {
   )
 }
 
+// ── Tunnel URL banner ─────────────────────────────────────────────────────────
+
+const LS_KEY = 'cw-phishing-base-url'
+
+type TunnelStatus = 'starting' | 'connected' | 'error' | 'closed'
+
+function TunnelBanner({
+  manualUrl, autoUrl, autoStatus, onManualChange,
+}: {
+  manualUrl: string
+  autoUrl: string
+  autoStatus: TunnelStatus
+  onManualChange: (v: string) => void
+}) {
+  const [showOverride, setShowOverride] = useState(false)
+  const [draft, setDraft] = useState(manualUrl)
+  const effectiveUrl = manualUrl || autoUrl
+  const isAuto = !manualUrl && !!autoUrl
+
+  function saveManual() {
+    const clean = draft.trim().replace(/\/+$/, '')
+    onManualChange(clean)
+    localStorage.setItem(LS_KEY, clean)
+    setShowOverride(false)
+  }
+
+  function clearManual() {
+    onManualChange('')
+    setDraft('')
+    localStorage.removeItem(LS_KEY)
+    setShowOverride(false)
+  }
+
+  // ── Connected (auto or manual) ──────────────────────────────────────────────
+  if (effectiveUrl) {
+    return (
+      <div className="flex-shrink-0 border-b border-emerald-500/20 bg-emerald-500/6">
+        <div className="flex items-center gap-3 px-5 py-2">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse flex-shrink-0" />
+          <span className="text-[11px] text-emerald-400 font-semibold">Tunnel active</span>
+          <span className={clsx(
+            'text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider',
+            isAuto ? 'bg-blue-500/20 text-blue-400 border border-blue-500/25' : 'bg-slate-700 text-slate-400',
+          )}>
+            {isAuto ? 'auto' : 'manual'}
+          </span>
+          <span className="text-[11px] font-mono text-slate-300 truncate flex-1">{effectiveUrl}</span>
+          <button onClick={() => { setDraft(manualUrl); setShowOverride(o => !o) }}
+            className="flex items-center gap-1 text-[10px] text-slate-500 hover:text-slate-300 transition-colors flex-shrink-0">
+            <Pencil size={9} /> override
+          </button>
+          {manualUrl && (
+            <button onClick={clearManual}
+              className="text-slate-600 hover:text-slate-400 transition-colors flex-shrink-0 ml-1">
+              <X size={11} />
+            </button>
+          )}
+        </div>
+
+        <AnimatePresence>
+          {showOverride && (
+            <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.15 }}
+              className="overflow-hidden border-t border-emerald-500/15 px-5 py-2">
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] text-slate-500 flex-shrink-0">Manual URL</span>
+                <input value={draft} onChange={e => setDraft(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && saveManual()}
+                  placeholder="https://your-tunnel.ngrok-free.app"
+                  className="flex-1 bg-surface-0 border border-wire-2 rounded px-3 py-1 text-[11px] font-mono text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-blue-500/40 transition-all" />
+                <button onClick={saveManual}
+                  className="px-2.5 py-1 rounded text-[11px] font-semibold bg-blue-500 hover:bg-blue-400 text-white transition-colors flex-shrink-0">
+                  Save
+                </button>
+                <button onClick={() => setShowOverride(false)}
+                  className="text-[11px] text-slate-500 hover:text-slate-300 transition-colors flex-shrink-0">
+                  Cancel
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+    )
+  }
+
+  // ── Starting / waiting for auto-tunnel ──────────────────────────────────────
+  if (autoStatus === 'starting') {
+    return (
+      <div className="flex-shrink-0 flex items-center gap-3 px-5 py-2.5 border-b border-blue-500/15 bg-blue-500/5">
+        <RefreshCw size={11} className="text-blue-400 animate-spin flex-shrink-0" />
+        <span className="text-[11px] text-blue-300">Establishing public tunnel…</span>
+        <span className="text-[10px] text-slate-600">links will update automatically</span>
+      </div>
+    )
+  }
+
+  // ── Error / no tunnel — show manual setup ───────────────────────────────────
+  return (
+    <div className="flex-shrink-0 border-b border-amber-500/25 bg-amber-500/6 px-5 py-3">
+      <div className="flex items-start gap-3">
+        <AlertTriangle size={13} className="text-amber-400 flex-shrink-0 mt-0.5" />
+        <div className="flex-1 min-w-0 space-y-2">
+          <p className="text-[12px] text-amber-300 font-medium">
+            {autoStatus === 'error'
+              ? 'Auto-tunnel failed — links only reachable from your machine.'
+              : <>Links show <code className="font-mono bg-amber-500/15 px-1 rounded">localhost:3001</code> — only reachable from your machine.</>}
+          </p>
+          <p className="text-[11px] text-slate-500">
+            Paste a tunnel URL from{' '}
+            <code className="font-mono bg-surface-0 border border-wire-2 text-slate-300 px-1.5 py-0.5 rounded text-[10px]">ngrok http 3001</code>
+            {' '}or any reverse proxy:
+          </p>
+          <div className="flex items-center gap-2">
+            <input value={draft} onChange={e => setDraft(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && draft.trim() && saveManual()}
+              placeholder="https://abc123.ngrok-free.app"
+              className="flex-1 bg-surface-0 border border-wire-2 rounded px-3 py-1.5 text-[12px] font-mono text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-amber-500/50 focus:ring-1 focus:ring-amber-500/20 transition-all" />
+            <button onClick={saveManual} disabled={!draft.trim()}
+              className="px-3 py-1.5 rounded text-[12px] font-semibold bg-amber-500 hover:bg-amber-400 disabled:opacity-40 disabled:cursor-not-allowed text-black transition-colors flex-shrink-0">
+              Save
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export function PhishingPayloadBuilder() {
@@ -540,10 +670,21 @@ export function PhishingPayloadBuilder() {
   const [newCaptures,     setNewCaptures]     = useState<Set<string>>(new Set())
   const [sseConnected,    setSseConnected]    = useState(false)
   const [filterCampaign,  setFilterCampaign]  = useState<string>('all')
+  const [publicBaseUrl,   setPublicBaseUrl]   = useState<string>(() => localStorage.getItem(LS_KEY) || '')
+  const [autoUrl,         setAutoUrl]         = useState<string>('')
+  const [autoStatus,      setAutoStatus]      = useState<TunnelStatus>('starting')
   const esRef = useRef<EventSource | null>(null)
 
   useEffect(() => {
     fetch(`${API}/api/phishing/campaigns`).then(r => r.json()).then(setCampaigns).catch(() => {})
+    fetch(`${API}/api/phishing/tunnel`)
+      .then(r => r.json())
+      .then(({ url, status }: { url: string; status: string }) => {
+        if (status === 'connected' && url) { setAutoUrl(url); setAutoStatus('connected') }
+        else if (status === 'error')        setAutoStatus('error')
+        else                               setAutoStatus('starting')
+      })
+      .catch(() => setAutoStatus('error'))
   }, [])
 
   useEffect(() => {
@@ -551,6 +692,13 @@ export function PhishingPayloadBuilder() {
     esRef.current = es
     es.addEventListener('open',  () => setSseConnected(true))
     es.addEventListener('error', () => setSseConnected(false))
+
+    es.addEventListener('tunnel', (e: MessageEvent) => {
+      const { url, status }: { url: string; status: string } = JSON.parse(e.data)
+      if (status === 'connected' && url) { setAutoUrl(url); setAutoStatus('connected') }
+      else if (status === 'error')        { setAutoUrl(''); setAutoStatus('error') }
+      else                               { setAutoUrl(''); setAutoStatus('closed') }
+    })
 
     es.addEventListener('capture', (e: MessageEvent) => {
       const c: Capture = JSON.parse(e.data)
@@ -647,6 +795,9 @@ export function PhishingPayloadBuilder() {
         </div>
       </div>
 
+      {/* Tunnel URL banner */}
+      <TunnelBanner manualUrl={publicBaseUrl} autoUrl={autoUrl} autoStatus={autoStatus} onManualChange={setPublicBaseUrl} />
+
       {/* Body */}
       <div className="flex flex-1 overflow-hidden">
 
@@ -676,6 +827,7 @@ export function PhishingPayloadBuilder() {
                   </motion.div>
                 ) : campaigns.map(c => (
                   <CampaignCard key={c.id} campaign={c} selected={selectedCampaign === c.id}
+                    baseUrl={publicBaseUrl || autoUrl}
                     onSelect={() => handleSelectCampaign(c.id)}
                     onDelete={() => handleDeleteCampaign(c.id)} />
                 ))}
