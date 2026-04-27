@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { ChevronDown, ChevronRight, LayoutDashboard, Settings } from 'lucide-react'
 import clsx from 'clsx'
 import { Logo } from './Logo'
-import { redTools, blueTools } from '../data/tools'
+import { redTools, blueTools, workflowTools } from '../data/tools'
 import type { Tool } from '../types'
 
 interface SidebarProps {
@@ -19,7 +19,7 @@ interface NavItemProps {
 
 function NavItem({ tool, collapsed }: NavItemProps) {
   const Icon = tool.icon
-  const isRed = tool.team === 'red'
+  const colors = teamColors(tool.team)
 
   return (
     <NavLink
@@ -29,11 +29,7 @@ function NavItem({ tool, collapsed }: NavItemProps) {
         clsx(
           'group flex items-center gap-2.5 px-2.5 py-2 rounded-md transition-all duration-150 relative overflow-hidden',
           'hover:bg-wire-2',
-          isActive
-            ? isRed
-              ? 'bg-rose-500/10 text-rose-400'
-              : 'bg-blue-500/10 text-blue-400'
-            : 'text-slate-400 hover:text-slate-200',
+          isActive ? colors.active : 'text-slate-400 hover:text-slate-200',
           collapsed && 'justify-center px-0',
         )
       }
@@ -43,19 +39,14 @@ function NavItem({ tool, collapsed }: NavItemProps) {
           {isActive && (
             <motion.div
               layoutId={`nav-indicator-${tool.team}`}
-              className={clsx(
-                'absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-4 rounded-r',
-                isRed ? 'bg-rose-400' : 'bg-blue-400',
-              )}
+              className={clsx('absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-4 rounded-r', colors.indicator)}
             />
           )}
           <Icon
             size={16}
             className={clsx(
               'flex-shrink-0 transition-colors',
-              isActive
-                ? isRed ? 'text-rose-400' : 'text-blue-400'
-                : 'text-slate-500 group-hover:text-slate-300',
+              isActive ? colors.icon : 'text-slate-500 group-hover:text-slate-300',
             )}
           />
           <AnimatePresence initial={false}>
@@ -79,26 +70,27 @@ function NavItem({ tool, collapsed }: NavItemProps) {
 
 interface SectionProps {
   label: string
-  team: 'red' | 'blue'
+  team: 'red' | 'blue' | 'workflow'
   tools: Tool[]
   collapsed: boolean
 }
 
+function teamColors(team: 'red' | 'blue' | 'workflow') {
+  if (team === 'red')      return { divider: 'bg-rose-500/20',   label: 'text-rose-500/70',   labelActive: 'text-rose-400',   indicator: 'bg-rose-400',   active: 'bg-rose-500/10 text-rose-400',   icon: 'text-rose-400' }
+  if (team === 'workflow') return { divider: 'bg-emerald-500/20', label: 'text-emerald-500/70', labelActive: 'text-emerald-400', indicator: 'bg-emerald-400', active: 'bg-emerald-500/10 text-emerald-400', icon: 'text-emerald-400' }
+  return                          { divider: 'bg-blue-500/20',    label: 'text-blue-500/70',   labelActive: 'text-blue-400',   indicator: 'bg-blue-400',   active: 'bg-blue-500/10 text-blue-400',   icon: 'text-blue-400' }
+}
+
 function NavSection({ label, team, tools, collapsed }: SectionProps) {
   const [expanded, setExpanded] = useState(true)
-  const isRed = team === 'red'
+  const colors = teamColors(team)
   const location = useLocation()
   const hasActive = tools.some(t => location.pathname === t.path)
 
   if (collapsed) {
     return (
       <div className="flex flex-col gap-0.5">
-        <div
-          className={clsx(
-            'h-px mx-2 my-1 rounded',
-            isRed ? 'bg-rose-500/20' : 'bg-blue-500/20',
-          )}
-        />
+        <div className={clsx('h-px mx-2 my-1 rounded', colors.divider)} />
         {tools.map(tool => (
           <NavItem key={tool.id} tool={tool} collapsed />
         ))}
@@ -114,8 +106,8 @@ function NavSection({ label, team, tools, collapsed }: SectionProps) {
           'flex items-center justify-between px-2.5 py-1.5 rounded-md w-full',
           'text-[11px] font-semibold tracking-widest uppercase',
           'transition-colors duration-150 hover:bg-wire-2',
-          isRed ? 'text-rose-500/70' : 'text-blue-500/70',
-          hasActive && !expanded && (isRed ? 'text-rose-400' : 'text-blue-400'),
+          colors.label,
+          hasActive && !expanded && colors.labelActive,
         )}
       >
         <span>{label}</span>
@@ -219,6 +211,13 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
 
         {/* Blue Team */}
         <NavSection label="Blue Team" team="blue" tools={blueTools} collapsed={collapsed} />
+
+        {!collapsed && (
+          <div className="h-px bg-wire-1 my-1" />
+        )}
+
+        {/* Workflow */}
+        <NavSection label="Workflow" team="workflow" tools={workflowTools} collapsed={collapsed} />
       </nav>
 
       {/* Settings at bottom */}

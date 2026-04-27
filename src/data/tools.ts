@@ -166,13 +166,13 @@ export const redTools: Tool[] = [
   },
 ]
 
-export const blueTools: Tool[] = [
+export const workflowTools: Tool[] = [
   {
     id: 'code-checkpoint',
     name: 'Code Checkpoint',
     description: 'Local Git checkpoint console for initializing a repository, committing the workspace, and pushing to a GitHub remote.',
     icon: Github,
-    team: 'blue',
+    team: 'workflow',
     category: 'Engineering',
     path: '/tools/code-checkpoint',
     capabilities: [
@@ -185,6 +185,9 @@ export const blueTools: Tool[] = [
     ],
     status: 'idle',
   },
+]
+
+export const blueTools: Tool[] = [
   {
     id: 'threat-monitor',
     name: 'Threat Monitor',
@@ -331,4 +334,4 @@ export const blueTools: Tool[] = [
   },
 ]
 
-export const allTools: Tool[] = [...redTools, ...blueTools]
+export const allTools: Tool[] = [...redTools, ...blueTools, ...workflowTools]
