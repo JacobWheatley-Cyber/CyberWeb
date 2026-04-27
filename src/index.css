@@ -1,0 +1,182 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Theme: Midnight (default) ────────────────────────────────────────────── */
+/* Deep space navy — current signature look */
+:root,
+[data-theme="midnight"] {
+  --surface-0: #04070f;
+  --surface-1: #070c1a;
+  --surface-2: #0b1224;
+  --surface-3: #0f1830;
+  --surface-4: #131f3a;
+  --wire-1: #0d1a33;
+  --wire-2: #152240;
+  --wire-3: #1a2a4e;
+  --wire-4: #203259;
+  --card-bg: #0b1224;
+  --card-border: #152240;
+  --card-elevated-bg: #0f1830;
+  --card-elevated-border: #1a2a4e;
+  --scrollbar: #1a2a4e;
+}
+
+/* ── Theme: Phosphor ──────────────────────────────────────────────────────── */
+/* Classic green phosphor CRT terminal — dark with deep green tinting */
+[data-theme="phosphor"] {
+  --surface-0: #020803;
+  --surface-1: #030b04;
+  --surface-2: #050f06;
+  --surface-3: #071409;
+  --surface-4: #0a190c;
+  --wire-1: #0e2010;
+  --wire-2: #122814;
+  --wire-3: #173119;
+  --wire-4: #1d3c20;
+  --card-bg: #050f06;
+  --card-border: #122814;
+  --card-elevated-bg: #071409;
+  --card-elevated-border: #173119;
+  --scrollbar: #173119;
+}
+
+/* ── Theme: Obsidian ──────────────────────────────────────────────────────── */
+/* Volcanic purple-black — deep, rich, sophisticated */
+[data-theme="obsidian"] {
+  --surface-0: #08060e;
+  --surface-1: #0b0912;
+  --surface-2: #100d18;
+  --surface-3: #161220;
+  --surface-4: #1c1728;
+  --wire-1: #211c2e;
+  --wire-2: #27213a;
+  --wire-3: #302846;
+  --wire-4: #3b3154;
+  --card-bg: #100d18;
+  --card-border: #27213a;
+  --card-elevated-bg: #161220;
+  --card-elevated-border: #302846;
+  --scrollbar: #302846;
+}
+
+/* ── Theme: Graphite ──────────────────────────────────────────────────────── */
+/* Pure neutral monochrome — no color tinting, ultra-clean */
+[data-theme="graphite"] {
+  --surface-0: #080808;
+  --surface-1: #0d0d0d;
+  --surface-2: #121212;
+  --surface-3: #181818;
+  --surface-4: #1e1e1e;
+  --wire-1: #242424;
+  --wire-2: #2c2c2c;
+  --wire-3: #363636;
+  --wire-4: #404040;
+  --card-bg: #121212;
+  --card-border: #2c2c2c;
+  --card-elevated-bg: #181818;
+  --card-elevated-border: #363636;
+  --scrollbar: #363636;
+}
+
+/* ── Font size ────────────────────────────────────────────────────────────── */
+[data-fontsize="small"]   { font-size: 13px; }
+[data-fontsize="default"] { font-size: 14px; }
+[data-fontsize="large"]   { font-size: 15px; }
+
+/* ── Sidebar density ──────────────────────────────────────────────────────── */
+[data-density="compact"]     { --nav-py: 0.25rem; }
+[data-density="comfortable"] { --nav-py: 0.5rem;  }
+[data-density="spacious"]    { --nav-py: 0.75rem; }
+
+/* ── Reduced motion ───────────────────────────────────────────────────────── */
+[data-motion="reduced"] *,
+[data-motion="reduced"] *::before,
+[data-motion="reduced"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+}
+
+/* ── Base ─────────────────────────────────────────────────────────────────── */
+@layer base {
+  html, body, #root {
+    height: 100%;
+    background-color: var(--surface-0);
+    color: #e2e8f0;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-size: 14px;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar) transparent;
+  }
+  *::-webkit-scrollbar { width: 4px; height: 4px; }
+  *::-webkit-scrollbar-track { background: transparent; }
+  *::-webkit-scrollbar-thumb { background-color: var(--scrollbar); border-radius: 2px; }
+}
+
+/* ── Utilities ────────────────────────────────────────────────────────────── */
+@layer utilities {
+  .bg-grid {
+    background-image:
+      linear-gradient(var(--wire-2) 1px, transparent 1px),
+      linear-gradient(to right, var(--wire-2) 1px, transparent 1px);
+    background-size: 36px 36px;
+    opacity: 0.45;
+  }
+
+  .glow-blue {
+    box-shadow: 0 0 0 1px rgba(59,130,246,0.25), 0 0 16px rgba(59,130,246,0.08);
+  }
+  .glow-red {
+    box-shadow: 0 0 0 1px rgba(244,63,94,0.25), 0 0 16px rgba(244,63,94,0.08);
+  }
+  .glow-green {
+    box-shadow: 0 0 0 1px rgba(16,185,129,0.25), 0 0 16px rgba(16,185,129,0.08);
+  }
+
+  .text-gradient-blue {
+    background: linear-gradient(135deg, #60a5fa, #34d399);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .text-gradient-red {
+    background: linear-gradient(135deg, #f87171, #fb923c);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .card-surface {
+    background-color: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 0.5rem;
+  }
+
+  .card-surface-elevated {
+    background-color: var(--card-elevated-bg);
+    border: 1px solid var(--card-elevated-border);
+    border-radius: 0.5rem;
+  }
+}
+
+/* ── Stagger helpers ──────────────────────────────────────────────────────── */
+.stagger-1 { animation-delay: 0.05s; }
+.stagger-2 { animation-delay: 0.1s; }
+.stagger-3 { animation-delay: 0.15s; }
+.stagger-4 { animation-delay: 0.2s; }
+.stagger-5 { animation-delay: 0.25s; }
+.stagger-6 { animation-delay: 0.3s; }
+.stagger-7 { animation-delay: 0.35s; }
+.stagger-8 { animation-delay: 0.4s; }
+
+.animate-fade-up,
+.animate-fade-in,
+.animate-slide-right {
+  opacity: 0;
+}
