@@ -75,6 +75,7 @@ function parseShortStatus(raw) {
 async function ensureGitignore() {
   const gitignorePath = `${REPO_ROOT}/.gitignore`
   const required = [
+    '.claude/',
     'node_modules/',
     'dist/',
     '.env',
