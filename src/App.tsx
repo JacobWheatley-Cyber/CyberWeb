@@ -10,21 +10,28 @@ import { NetworkRecon } from './pages/tools/NetworkRecon'
 import { ThreatMonitor } from './pages/tools/ThreatMonitor'
 import { VulnScanner } from './pages/tools/VulnScanner'
 import { PortScanner } from './pages/tools/PortScanner'
-import { PhishingPayloadBuilder } from './pages/tools/PhishingPayloadBuilder'
 import { CodeCheckpoint } from './pages/tools/CodeCheckpoint'
+import { ImageLocationFinder } from './pages/tools/ImageLocationFinder'
+import { Sherlock } from './pages/tools/Sherlock'
+import { WhoisDnsIntel } from './pages/tools/WhoisDnsIntel'
+import { EmailHarvester } from './pages/tools/EmailHarvester'
+import { BreachSearch } from './pages/tools/BreachSearch'
 import { ToolPlaceholder } from './pages/tools/ToolPlaceholder'
-import { redTools, blueTools } from './data/tools'
+import { redTools, blueTools, workflowTools, osintTools } from './data/tools'
 import { useSettings, SESSION_TIMEOUT_MS } from './hooks/useSettings'
 import { SettingsContext } from './context/SettingsContext'
 import { useProfile } from './hooks/useProfile'
 import { ProfileContext } from './context/ProfileContext'
 import { Profile } from './pages/Profile'
-import { SplashScreen } from './components/SplashScreen'
 import { ShieldOff, RefreshCw } from 'lucide-react'
 
+const osintDedicatedIds = new Set(['image-location-finder', 'sherlock', 'whois-dns-intel', 'email-harvester', 'breach-search'])
+
 const placeholderTools = [
-  ...redTools.filter(t => t.id !== 'network-recon' && t.id !== 'vuln-scanner' && t.id !== 'port-scanner' && t.id !== 'phishing-payload-builder'),
+  ...redTools.filter(t => t.id !== 'network-recon' && t.id !== 'vuln-scanner' && t.id !== 'port-scanner'),
   ...blueTools.filter(t => t.id !== 'threat-monitor' && t.id !== 'code-checkpoint'),
+  ...workflowTools,
+  ...osintTools.filter(t => !osintDedicatedIds.has(t.id)),
 ]
 
 function AnimatedRoutes() {
@@ -47,8 +54,12 @@ function AnimatedRoutes() {
           <Route path="/tools/threat-monitor" element={<ThreatMonitor />} />
           <Route path="/tools/vuln-scanner" element={<VulnScanner />} />
           <Route path="/tools/port-scanner" element={<PortScanner />} />
-          <Route path="/tools/phishing-payload-builder" element={<PhishingPayloadBuilder />} />
           <Route path="/tools/code-checkpoint" element={<CodeCheckpoint />} />
+          <Route path="/tools/image-location-finder" element={<ImageLocationFinder />} />
+          <Route path="/tools/sherlock" element={<Sherlock />} />
+          <Route path="/tools/whois-dns-intel" element={<WhoisDnsIntel />} />
+          <Route path="/tools/email-harvester" element={<EmailHarvester />} />
+          <Route path="/tools/breach-search" element={<BreachSearch />} />
           {placeholderTools.map(tool => (
             <Route
               key={tool.id}
@@ -104,12 +115,7 @@ function SessionExpiredOverlay({ onResume }: { onResume: () => void }) {
 export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [sessionExpired, setSessionExpired] = useState(false)
-  const [splashDone, setSplashDone] = useState(() => sessionStorage.getItem('cw-splash') === '1')
 
-  function handleSplashDone() {
-    sessionStorage.setItem('cw-splash', '1')
-    setSplashDone(true)
-  }
   const settingsApi = useSettings()
   const profileApi = useProfile()
   const { settings } = settingsApi
@@ -178,7 +184,6 @@ export default function App() {
       </ProfileContext.Provider>
     </SettingsContext.Provider>
 
-    {!splashDone && <SplashScreen onDone={handleSplashDone} />}
     </>
   )
 }

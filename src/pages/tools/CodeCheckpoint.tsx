@@ -20,6 +20,8 @@ import {
   XCircle,
 } from 'lucide-react'
 
+import { apiFetch } from '../../lib/api'
+
 const API = 'http://localhost:3001'
 
 interface GitChange {
@@ -112,7 +114,7 @@ export function CodeCheckpoint() {
   async function loadStatus() {
     setLoading(true)
     try {
-      const resp = await fetch(`${API}/api/checkpoint/status`)
+      const resp = await apiFetch(`${API}/api/checkpoint/status`)
       const data = await resp.json()
       if (!resp.ok) throw new Error(data.error || 'Unable to load status')
       setStatus(data)
@@ -137,7 +139,7 @@ export function CodeCheckpoint() {
     setRunning(true)
     setResult(null)
     try {
-      const resp = await fetch(`${API}${path}`, {
+      const resp = await apiFetch(`${API}${path}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),

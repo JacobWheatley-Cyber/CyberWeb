@@ -293,10 +293,10 @@ async function cloneSite(targetUrl) {
 // IMPORTANT: call this AFTER all other route registrations in index.js so the
 // catch-all wildcard at the bottom doesn't swallow unrelated paths.
 
-export function registerPhishingRoutes(app) {
+export function registerPhishingRoutes(app, requireApiKey = (_r, _s, n) => n()) {
 
   // ── Create campaign ─────────────────────────────────────────────────────────
-  app.post('/api/phishing/campaigns', async (req, res) => {
+  app.post('/api/phishing/campaigns', requireApiKey, async (req, res) => {
     const { name, targetUrl, mode = 'visit', redirectUrl = '' } = req.body || {}
     if (!name?.trim() || !targetUrl?.trim())
       return res.status(400).json({ error: 'name and targetUrl are required' })
@@ -342,7 +342,7 @@ export function registerPhishingRoutes(app) {
   })
 
   // ── List campaigns ──────────────────────────────────────────────────────────
-  app.get('/api/phishing/campaigns', (_req, res) => {
+  app.get('/api/phishing/campaigns', requireApiKey, (_req, res) => {
     const list = [...campaigns.values()]
       .map(({ clonedHtml: _, ...c }) => c)
       .sort((a, b) => b.created - a.created)
@@ -350,7 +350,7 @@ export function registerPhishingRoutes(app) {
   })
 
   // ── Delete campaign ─────────────────────────────────────────────────────────
-  app.delete('/api/phishing/campaigns/:id', (req, res) => {
+  app.delete('/api/phishing/campaigns/:id', requireApiKey, (req, res) => {
     const c = campaigns.get(req.params.id)
     if (!c) return res.status(404).json({ error: 'Campaign not found' })
     slugMap.delete(c.slug)
@@ -361,7 +361,7 @@ export function registerPhishingRoutes(app) {
   })
 
   // ── Get captures for a campaign ─────────────────────────────────────────────
-  app.get('/api/phishing/captures/:campaignId', (req, res) => {
+  app.get('/api/phishing/captures/:campaignId', requireApiKey, (req, res) => {
     const list = captures.get(req.params.campaignId)
     if (!list) return res.status(404).json({ error: 'Campaign not found' })
     res.json(list)
@@ -411,13 +411,13 @@ export function registerPhishingRoutes(app) {
   })
 
   // ── Tunnel status ───────────────────────────────────────────────────────────
-  app.get('/api/phishing/tunnel', (_req, res) => {
+  app.get('/api/phishing/tunnel', requireApiKey, (_req, res) => {
     res.json({ url: tunnelUrl, status: tunnelStatus, publicIp })
   })
 
 
   // ── SSE stream ──────────────────────────────────────────────────────────────
-  app.get('/api/phishing/stream', (req, res) => {
+  app.get('/api/phishing/stream', requireApiKey, (req, res) => {
     res.setHeader('Content-Type', 'text/event-stream')
     res.setHeader('Cache-Control', 'no-cache')
     res.setHeader('Connection', 'keep-alive')

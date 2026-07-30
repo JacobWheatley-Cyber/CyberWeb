@@ -8,6 +8,7 @@ import {
 } from 'lucide-react'
 import { useProfileContext } from '../context/ProfileContext'
 import { useSettingsContext } from '../context/SettingsContext'
+import { apiFetch } from '../lib/api'
 import { getInitials, STATUS_CONFIG, AVATAR_COLORS } from '../hooks/useProfile'
 import type { UserStatus } from '../hooks/useProfile'
 import { useNavigate } from 'react-router-dom'
@@ -272,8 +273,8 @@ export function Profile() {
 
   useEffect(() => {
     Promise.all([
-      fetch('/api/health').then(r => r.ok ? r.json() : null).catch(() => null),
-      fetch('/api/activity').then(r => r.ok ? r.json() : []).catch(() => []),
+      apiFetch('/api/health').then(r => r.ok ? r.json() : null).catch(() => null),
+      apiFetch('/api/activity').then(r => r.ok ? r.json() : []).catch(() => []),
     ]).then(([h, a]) => {
       if (h) setHealth(h)
       setActivity(a)

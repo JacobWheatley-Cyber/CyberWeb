@@ -7,6 +7,7 @@ import {
   Radio, Shield, Layers, Zap, X, Pencil,
 } from 'lucide-react'
 import clsx from 'clsx'
+import { apiFetch, apiUrl } from '../../lib/api'
 
 const API = 'http://localhost:3001'
 
@@ -415,7 +416,7 @@ function NewCampaignForm({ onCreated }: { onCreated: (c: Campaign) => void }) {
     if (!name.trim() || !targetUrl.trim()) return
     setLoading(true); setError('')
     try {
-      const r = await fetch(`${API}/api/phishing/campaigns`, {
+      const r = await apiFetch(`${API}/api/phishing/campaigns`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: name.trim(), targetUrl: targetUrl.trim(), mode, redirectUrl: redirectUrl.trim() }),
@@ -676,8 +677,8 @@ export function PhishingPayloadBuilder() {
   const esRef = useRef<EventSource | null>(null)
 
   useEffect(() => {
-    fetch(`${API}/api/phishing/campaigns`).then(r => r.json()).then(setCampaigns).catch(() => {})
-    fetch(`${API}/api/phishing/tunnel`)
+    apiFetch(`${API}/api/phishing/campaigns`).then(r => r.json()).then(setCampaigns).catch(() => {})
+    apiFetch(`${API}/api/phishing/tunnel`)
       .then(r => r.json())
       .then(({ url, status }: { url: string; status: string }) => {
         if (status === 'connected' && url) { setAutoUrl(url); setAutoStatus('connected') }
@@ -688,7 +689,7 @@ export function PhishingPayloadBuilder() {
   }, [])
 
   useEffect(() => {
-    const es = new EventSource(`${API}/api/phishing/stream`)
+    const es = new EventSource(apiUrl(`${API}/api/phishing/stream`))
     esRef.current = es
     es.addEventListener('open',  () => setSseConnected(true))
     es.addEventListener('error', () => setSseConnected(false))
@@ -720,7 +721,7 @@ export function PhishingPayloadBuilder() {
   }, [])
 
   const loadCaptures = useCallback((campaignId: string) => {
-    fetch(`${API}/api/phishing/captures/${campaignId}`)
+    apiFetch(`${API}/api/phishing/captures/${campaignId}`)
       .then(r => r.json())
       .then((list: Capture[]) => {
         setCaptures(prev => {
@@ -744,7 +745,7 @@ export function PhishingPayloadBuilder() {
   }
 
   async function handleDeleteCampaign(id: string) {
-    await fetch(`${API}/api/phishing/campaigns/${id}`, { method: 'DELETE' })
+    await apiFetch(`${API}/api/phishing/campaigns/${id}`, { method: 'DELETE' })
     setCampaigns(prev => prev.filter(c => c.id !== id))
     setCaptures(prev => prev.filter(c => c.campaignId !== id))
     if (selectedCampaign === id) { setSelectedCampaign(null); setFilterCampaign('all') }

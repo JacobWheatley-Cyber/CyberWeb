@@ -7,6 +7,7 @@ import {
   Zap, Wrench, ArrowRight, Check, Copy,
 } from 'lucide-react'
 import { SavedTargets } from '../../components/SavedTargets'
+import { apiUrl } from '../../lib/api'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -512,7 +513,7 @@ export function VulnScanner() {
     startTimeRef.current = Date.now()
 
     const url = `/api/vuln-scan?target=${encodeURIComponent(target.trim())}&mode=${encodeURIComponent(mode)}`
-    const es = new EventSource(url)
+    const es = new EventSource(apiUrl(url))
     esRef.current = es
 
     es.addEventListener('start', (e) => {

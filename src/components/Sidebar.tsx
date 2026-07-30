@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { ChevronDown, ChevronRight, LayoutDashboard, Settings } from 'lucide-react'
 import clsx from 'clsx'
 import { Logo } from './Logo'
-import { redTools, blueTools, workflowTools } from '../data/tools'
+import { redTools, blueTools, workflowTools, osintTools } from '../data/tools'
 import type { Tool } from '../types'
 
 interface SidebarProps {
@@ -70,14 +70,15 @@ function NavItem({ tool, collapsed }: NavItemProps) {
 
 interface SectionProps {
   label: string
-  team: 'red' | 'blue' | 'workflow'
+  team: 'red' | 'blue' | 'workflow' | 'osint'
   tools: Tool[]
   collapsed: boolean
 }
 
-function teamColors(team: 'red' | 'blue' | 'workflow') {
+function teamColors(team: 'red' | 'blue' | 'workflow' | 'osint') {
   if (team === 'red')      return { divider: 'bg-rose-500/20',   label: 'text-rose-500/70',   labelActive: 'text-rose-400',   indicator: 'bg-rose-400',   active: 'bg-rose-500/10 text-rose-400',   icon: 'text-rose-400' }
   if (team === 'workflow') return { divider: 'bg-emerald-500/20', label: 'text-emerald-500/70', labelActive: 'text-emerald-400', indicator: 'bg-emerald-400', active: 'bg-emerald-500/10 text-emerald-400', icon: 'text-emerald-400' }
+  if (team === 'osint')    return { divider: 'bg-orange-500/20',  label: 'text-orange-500/70',  labelActive: 'text-orange-400',  indicator: 'bg-orange-400',  active: 'bg-orange-500/10 text-orange-400',  icon: 'text-orange-400' }
   return                          { divider: 'bg-blue-500/20',    label: 'text-blue-500/70',   labelActive: 'text-blue-400',   indicator: 'bg-blue-400',   active: 'bg-blue-500/10 text-blue-400',   icon: 'text-blue-400' }
 }
 
@@ -218,6 +219,13 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
 
         {/* Workflow */}
         <NavSection label="Workflow" team="workflow" tools={workflowTools} collapsed={collapsed} />
+
+        {!collapsed && (
+          <div className="h-px bg-wire-1 my-1" />
+        )}
+
+        {/* OSINT */}
+        <NavSection label="OSINT" team="osint" tools={osintTools} collapsed={collapsed} />
       </nav>
 
       {/* Settings at bottom */}

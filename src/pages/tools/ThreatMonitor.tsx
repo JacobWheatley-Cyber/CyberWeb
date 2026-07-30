@@ -7,6 +7,7 @@ import {
   Radio, WifiOff, Database, ShieldCheck,
 } from 'lucide-react'
 import type { ThreatEntry } from '../../types'
+import { apiFetch, apiUrl } from '../../lib/api'
 
 interface DataSources {
   blocklist: boolean
@@ -115,7 +116,7 @@ function ThreatDetail({ threat, onClose, onStatusChange }: {
   async function act(status: ThreatEntry['status']) {
     setBusy(status)
     try {
-      const r = await fetch(`/api/threats/${threat.id}/status`, {
+      const r = await apiFetch(`/api/threats/${threat.id}/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status }),
@@ -323,7 +324,7 @@ export function ThreatMonitor() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const r = await fetch('/api/threats')
+      const r = await apiFetch('/api/threats')
       if (r.ok) {
         const body = await r.json()
         setThreats(body.threats ?? [])
@@ -339,7 +340,7 @@ export function ThreatMonitor() {
 
   // SSE stream for live threats
   useEffect(() => {
-    const es = new EventSource('http://localhost:3001/api/threats/stream')
+    const es = new EventSource(apiUrl('http://localhost:3001/api/threats/stream'))
     eventSourceRef.current = es
 
     es.addEventListener('threat', (e: MessageEvent) => {

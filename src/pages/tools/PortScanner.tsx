@@ -1,4 +1,5 @@
 import { useState, useRef, useMemo } from 'react'
+import { apiUrl } from '../../lib/api'
 import { motion, AnimatePresence } from 'framer-motion'
 import clsx from 'clsx'
 import {
@@ -359,7 +360,7 @@ export function PortScanner() {
       params.set('mode', mode)
     }
 
-    const es = new EventSource(`http://localhost:3001/api/port-scan?${params}`)
+    const es = new EventSource(apiUrl(`http://localhost:3001/api/port-scan?${params}`))
     esRef.current = es
 
     es.addEventListener('start', e => {

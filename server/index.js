@@ -8,7 +8,7 @@ import { vulnScanTarget } from './vulnScanner.js'
 import { printBanner, logScan, logError } from './banner.js'
 import { getThreats, setThreatStatus, addListener, lastPollTime, dataSources } from './threatMonitor.js'
 import { portScan, PORT_PRESETS, parsePortSpec } from './portScanner.js'
-import { registerPhishingRoutes } from './phishingServer.js'
+import { SHERLOCK_SITES } from './sherlockSites.js'
 
 const app = express()
 const PORT = 3001
@@ -18,11 +18,26 @@ const REPO_ROOT = process.cwd()
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*')
   res.setHeader('Access-Control-Allow-Methods', 'GET, PATCH, POST, DELETE, OPTIONS')
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-API-Key')
   if (req.method === 'OPTIONS') return res.sendStatus(204)
   next()
 })
 app.use(express.json())
+
+// ── API key auth ──────────────────────────────────────────────────────────────
+
+const API_KEY = process.env.CYBERWEB_API_KEY || ''
+
+if (!API_KEY) {
+  console.warn('[auth] CYBERWEB_API_KEY is not set — all endpoints are unprotected. Set it in .env to enable authentication.')
+}
+
+function requireApiKey(req, res, next) {
+  if (!API_KEY) return next()
+  const provided = req.headers['x-api-key'] || req.query.api_key
+  if (provided !== API_KEY) return res.status(401).json({ error: 'Unauthorized' })
+  next()
+}
 
 // ── Server-side state ─────────────────────────────────────────────────────────
 
@@ -200,7 +215,7 @@ function sseHandler(res, fn) {
 
 // ── Network recon ─────────────────────────────────────────────────────────────
 
-app.get('/api/scan', (req, res) => {
+app.get('/api/scan', requireApiKey, (req, res) => {
   const { target, mode = 'Standard' } = req.query
   if (!target || typeof target !== 'string')
     return res.status(400).json({ error: 'target is required' })
@@ -232,7 +247,7 @@ app.get('/api/scan', (req, res) => {
 
 // ── Vulnerability scan ────────────────────────────────────────────────────────
 
-app.get('/api/vuln-scan', (req, res) => {
+app.get('/api/vuln-scan', requireApiKey, (req, res) => {
   const { target, mode = 'Standard' } = req.query
   if (!target || typeof target !== 'string')
     return res.status(400).json({ error: 'target is required' })
@@ -266,7 +281,7 @@ app.get('/api/vuln-scan', (req, res) => {
 
 // ── Port Scanner ──────────────────────────────────────────────────────────────
 
-app.get('/api/port-scan', (req, res) => {
+app.get('/api/port-scan', requireApiKey, (req, res) => {
   const { target, ports, mode, timeout } = req.query
   if (!target || typeof target !== 'string')
     return res.status(400).json({ error: 'target is required' })
@@ -304,11 +319,11 @@ app.get('/api/port-scan', (req, res) => {
 
 // ── Threat Monitor ────────────────────────────────────────────────────────────
 
-app.get('/api/threats', (_req, res) => {
+app.get('/api/threats', requireApiKey, (_req, res) => {
   res.json({ threats: getThreats(), lastPollTime, dataSources })
 })
 
-app.get('/api/threats/stream', (req, res) => {
+app.get('/api/threats/stream', requireApiKey, (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream')
   res.setHeader('Cache-Control', 'no-cache')
   res.setHeader('Connection', 'keep-alive')
@@ -320,7 +335,7 @@ app.get('/api/threats/stream', (req, res) => {
   req.on('close', remove)
 })
 
-app.patch('/api/threats/:id/status', (req, res) => {
+app.patch('/api/threats/:id/status', requireApiKey, (req, res) => {
   const { status } = req.body
   const valid = ['active', 'blocked', 'monitoring', 'investigating', 'resolved']
   if (!valid.includes(status)) return res.status(400).json({ error: 'invalid status' })
@@ -347,14 +362,12 @@ app.get('/api/health', async (req, res) => {
   })
 })
 
-app.get('/api/activity', (_req, res) => {
+app.get('/api/activity', requireApiKey, (_req, res) => {
   res.json(activityLog)
 })
 
-// ── Phishing Payload Builder ──────────────────────────────────────────────────
-
 // Code checkpoint / GitHub submit
-app.get('/api/checkpoint/status', async (_req, res) => {
+app.get('/api/checkpoint/status', requireApiKey, async (_req, res) => {
   try {
     res.json(await getCheckpointStatus())
   } catch (err) {
@@ -362,7 +375,7 @@ app.get('/api/checkpoint/status', async (_req, res) => {
   }
 })
 
-app.post('/api/checkpoint/init', async (req, res) => {
+app.post('/api/checkpoint/init', requireApiKey, async (req, res) => {
   const { remoteUrl = '', branch = 'main', protectGenerated = true } = req.body || {}
   const steps = []
 
@@ -400,7 +413,7 @@ app.post('/api/checkpoint/init', async (req, res) => {
   }
 })
 
-app.post('/api/checkpoint/run', async (req, res) => {
+app.post('/api/checkpoint/run', requireApiKey, async (req, res) => {
   const {
     message = '',
     push = true,
@@ -474,7 +487,153 @@ app.post('/api/checkpoint/run', async (req, res) => {
   }
 })
 
-registerPhishingRoutes(app)
+// ── Sherlock username search ──────────────────────────────────────────────────
+
+const SHERLOCK_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
+const SHERLOCK_TIMEOUT = 8000
+const SHERLOCK_BATCH = 20
+
+// Patterns that indicate "not found" even when HTTP status is 200.
+// Checked case-insensitively against first 10KB of body for all sites.
+const STALE_PATTERNS = [
+  "sorry, this page isn't available",           // Instagram
+  "this account doesn't exist",                 // Twitter/X variants
+  "page not found",
+  "user not found",
+  "profile not found",
+  "account not found",
+  "couldn't find this account",
+  "we couldn't find that user",
+  "this channel doesn't exist",
+  "the page you requested was not found",
+  "sorry, that page doesn't exist",
+  "this page doesn't exist",
+  "oops! that page can't be found",
+  "sorry, we can't find the page",
+  "hmm...this page doesn't exist",
+  "the link you followed may be broken",        // Instagram error body
+  "no such user",
+  "no users found",
+  "404 not found",
+  "<title>error</title>",
+  "<title>not found</title>",
+  "<title>page not found</title>",
+]
+
+async function readPartialBody(res, maxBytes = 10000) {
+  try {
+    const reader = res.body.getReader()
+    const chunks = []
+    let total = 0
+    while (total < maxBytes) {
+      const { done, value } = await reader.read()
+      if (done) break
+      chunks.push(value)
+      total += value.length
+    }
+    reader.cancel().catch(() => {})
+    return Buffer.concat(chunks.map(c => Buffer.from(c))).toString('utf-8').slice(0, maxBytes)
+  } catch {
+    return ''
+  }
+}
+
+function isStale(body) {
+  const lower = body.toLowerCase()
+  return STALE_PATTERNS.some(p => lower.includes(p))
+}
+
+async function checkSite(site, username) {
+  const displayUrl = site.url.replace('{}', encodeURIComponent(username))
+
+  // JS SPAs / heavily bot-protected: server always returns 200 + JS bundle.
+  // Body checking is impossible. Return as a manual-verification link instead.
+  if (site.uncertain) {
+    return { ...site, url: displayUrl, found: false, uncertain: true, responseTime: 0 }
+  }
+
+  // Use JSON API endpoint when available — gives reliable 404s for missing users.
+  const checkUrl = site.apiUrl
+    ? site.apiUrl.replace('{}', encodeURIComponent(username))
+    : displayUrl
+
+  const start = Date.now()
+  try {
+    const res = await fetch(checkUrl, {
+      method: 'GET',
+      headers: {
+        'User-Agent': SHERLOCK_UA,
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept': site.apiUrl
+          ? 'application/json'
+          : 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      },
+      signal: AbortSignal.timeout(SHERLOCK_TIMEOUT),
+      redirect: 'follow',
+    })
+    const responseTime = Date.now() - start
+
+    // Hard 404/403/410 → not found
+    if ([404, 403, 410].includes(res.status)) {
+      return { ...site, url: displayUrl, found: false, responseTime, httpStatus: res.status }
+    }
+
+    if (res.status === 200) {
+      const body = await readPartialBody(res)
+
+      // Some APIs (Hacker News) return literal "null" for missing users
+      if (site.apiUrl && body.trim() === 'null') {
+        return { ...site, url: displayUrl, found: false, responseTime, httpStatus: res.status }
+      }
+
+      // API check passed — user data was returned
+      if (site.apiUrl) {
+        return { ...site, url: displayUrl, found: true, responseTime, httpStatus: res.status }
+      }
+
+      // HTML check: site-specific error message
+      if (site.errorType === 'message' && site.errorMsg) {
+        if (body.toLowerCase().includes(site.errorMsg.toLowerCase())) {
+          return { ...site, url: displayUrl, found: false, responseTime, httpStatus: res.status }
+        }
+      }
+
+      // Generic stale page detection
+      if (isStale(body)) {
+        return { ...site, url: displayUrl, found: false, responseTime, httpStatus: res.status }
+      }
+
+      return { ...site, url: displayUrl, found: true, responseTime, httpStatus: res.status }
+    }
+
+    // Redirects, 5xx → not found
+    return { ...site, url: displayUrl, found: false, responseTime, httpStatus: res.status }
+  } catch {
+    return { ...site, url: displayUrl, found: false, responseTime: Date.now() - start, httpStatus: 0, error: 'timeout' }
+  }
+}
+
+app.get('/api/sherlock', requireApiKey, (req, res) => {
+  const { username } = req.query
+  if (!username || typeof username !== 'string' || username.length < 1)
+    return res.status(400).json({ error: 'username is required' })
+  if (!/^[a-zA-Z0-9._\-]{1,50}$/.test(username))
+    return res.status(400).json({ error: 'invalid username' })
+
+  sseHandler(res, async (send) => {
+    send('start', { total: SHERLOCK_SITES.length, username })
+
+    for (let i = 0; i < SHERLOCK_SITES.length; i += SHERLOCK_BATCH) {
+      const batch = SHERLOCK_SITES.slice(i, i + SHERLOCK_BATCH)
+      const results = await Promise.all(batch.map(site => checkSite(site, username)))
+      for (const result of results) {
+        send('result', result)
+      }
+    }
+
+    send('complete', { username, total: SHERLOCK_SITES.length })
+  })
+})
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 

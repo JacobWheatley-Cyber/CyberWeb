@@ -41,6 +41,9 @@ export interface AppSettings {
 
   // API keys (stored as plain text — no real server involved)
   apiKeys: Record<string, string>
+
+  // Key required by the local API server (set CYBERWEB_API_KEY in .env)
+  serverApiKey: string
 }
 
 const DEFAULTS: AppSettings = {
@@ -79,7 +82,10 @@ const DEFAULTS: AppSettings = {
     AbuseIPDB: '',
     Censys: '',
     PagerDuty: '',
+    GeoSpy: '',
   },
+
+  serverApiKey: '',
 }
 
 const STORAGE_KEY = 'cyberweb-settings'

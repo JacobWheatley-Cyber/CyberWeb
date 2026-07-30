@@ -6,6 +6,7 @@ import {
   Activity, Globe, Search, AlertCircle, Loader2, Shield,
 } from 'lucide-react'
 import { SavedTargets } from '../../components/SavedTargets'
+import { apiUrl } from '../../lib/api'
 import type { ScanHost } from '../../types'
 
 interface PortResult {
@@ -220,7 +221,7 @@ export function NetworkRecon() {
     startTimeRef.current = Date.now()
 
     const url = `/api/scan?target=${encodeURIComponent(target.trim())}&mode=${encodeURIComponent(mode)}`
-    const es = new EventSource(url)
+    const es = new EventSource(apiUrl(url))
     esRef.current = es
 
     es.addEventListener('start', (e) => {

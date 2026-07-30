@@ -8,6 +8,7 @@ import {
 } from 'lucide-react'
 import { redTools, blueTools } from '../data/tools'
 import { useSettingsContext } from '../context/SettingsContext'
+import { apiFetch } from '../lib/api'
 
 const allTools = [...redTools, ...blueTools]
 
@@ -102,8 +103,8 @@ export function Dashboard() {
     async function fetchAll() {
       try {
         const [hRes, aRes] = await Promise.all([
-          fetch('/api/health'),
-          fetch('/api/activity'),
+          apiFetch('/api/health'),
+          apiFetch('/api/activity'),
         ])
         if (cancelled) return
         if (hRes.ok) { setHealth(await hRes.json()); setApiOnline(true) }

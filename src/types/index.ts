@@ -5,7 +5,7 @@ export interface Tool {
   name: string
   description: string
   icon: LucideIcon
-  team: 'red' | 'blue' | 'workflow'
+  team: 'red' | 'blue' | 'workflow' | 'osint'
   category: string
   path: string
   capabilities: string[]
