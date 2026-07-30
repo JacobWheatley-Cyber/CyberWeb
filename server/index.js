@@ -422,6 +422,7 @@ app.post('/api/checkpoint/run', requireApiKey, async (req, res) => {
     initIfNeeded = true,
     remoteUrl = '',
     protectGenerated = true,
+    pushStrategy = 'normal', // 'normal' | 'rebase' | 'force'
   } = req.body || {}
   const steps = []
 
@@ -475,15 +476,24 @@ app.post('/api/checkpoint/run', requireApiKey, async (req, res) => {
       if (!remotes.includes(remote)) {
         steps.push(`Skipped push: ${remote} remote is not configured`)
       } else {
-        await git(['push', '-u', remote, targetBranch], { timeout: 180000 })
+        if (pushStrategy === 'rebase') {
+          await git(['pull', '--rebase', remote, targetBranch], { timeout: 60000 })
+          steps.push(`Pulled and rebased from ${remote}/${targetBranch}`)
+        }
+        const pushArgs = ['push', '-u', remote, targetBranch]
+        if (pushStrategy === 'force') pushArgs.push('--force-with-lease')
+        await git(pushArgs, { timeout: 180000 })
         pushed = true
-        steps.push(`Pushed ${targetBranch} to ${remote}`)
+        steps.push(pushStrategy === 'force'
+          ? `Force-pushed ${targetBranch} to ${remote}`
+          : `Pushed ${targetBranch} to ${remote}`)
       }
     }
 
     res.json({ ok: true, commit, pushed, steps, status: await getCheckpointStatus() })
   } catch (err) {
-    res.status(500).json({ error: err.message || 'Checkpoint failed', steps })
+    const isPushRejected = /rejected|fetch first|non-fast-forward/i.test(err.message || '')
+    res.status(500).json({ error: err.message || 'Checkpoint failed', steps, pushRejected: isPushRejected })
   }
 })
 

@@ -11,6 +11,7 @@ import {
   GitBranch,
   GitCommit,
   Github,
+  GitMerge,
   Link,
   Play,
   RefreshCw,
@@ -18,6 +19,7 @@ import {
   Terminal,
   UploadCloud,
   XCircle,
+  Zap,
 } from 'lucide-react'
 
 import { apiFetch } from '../../lib/api'
@@ -53,6 +55,7 @@ interface RunResult {
   steps?: string[]
   commit?: { hash: string; subject: string } | null
   pushed?: boolean
+  pushRejected?: boolean
   status?: GitStatus
 }
 
@@ -106,6 +109,7 @@ export function CodeCheckpoint() {
   const [push, setPush] = useState(true)
   const [protectGenerated, setProtectGenerated] = useState(true)
   const [result, setResult] = useState<RunResult | null>(null)
+  const [forceConfirm, setForceConfirm] = useState(false)
 
   const origin = useMemo(() => status?.remotes.find(r => r.name === 'origin' && r.kind === 'fetch'), [status])
   const repoUrl = githubRepoUrl(remoteUrl || origin?.url || '')
@@ -161,6 +165,7 @@ export function CodeCheckpoint() {
   }
 
   function runCheckpoint() {
+    setForceConfirm(false)
     post('/api/checkpoint/run', {
       message,
       push,
@@ -169,6 +174,20 @@ export function CodeCheckpoint() {
       initIfNeeded: true,
       remoteUrl,
       protectGenerated,
+    })
+  }
+
+  function runWithStrategy(pushStrategy: 'rebase' | 'force') {
+    setForceConfirm(false)
+    post('/api/checkpoint/run', {
+      message,
+      push: true,
+      remote: 'origin',
+      branch,
+      initIfNeeded: false,
+      remoteUrl,
+      protectGenerated,
+      pushStrategy,
     })
   }
 
@@ -387,18 +406,72 @@ export function CodeCheckpoint() {
               <h2 className="text-sm font-semibold text-slate-200">Run Log</h2>
             </div>
             <div className="p-4 space-y-2 min-h-[180px]">
-              {result?.error && (
-                <div className="rounded-md border border-rose-500/25 bg-rose-500/10 p-3 flex gap-2 text-[12px] text-rose-200">
-                  <XCircle size={14} className="flex-shrink-0 mt-0.5" />
-                  <span>{result.error}</span>
-                </div>
-              )}
               {result?.steps?.map((step, idx) => (
                 <div key={`${step}-${idx}`} className="flex items-start gap-2 text-[12px]">
                   <ShieldCheck size={13} className="text-emerald-300 flex-shrink-0 mt-0.5" />
                   <span className="text-slate-300">{step}</span>
                 </div>
               ))}
+
+              {result?.error && !result.pushRejected && (
+                <div className="rounded-md border border-rose-500/25 bg-rose-500/10 p-3 flex gap-2 text-[12px] text-rose-200">
+                  <XCircle size={14} className="flex-shrink-0 mt-0.5" />
+                  <span className="font-mono break-all">{result.error}</span>
+                </div>
+              )}
+
+              {result?.pushRejected && (
+                <div className="rounded-md border border-amber-500/25 bg-amber-500/8 p-3 space-y-3">
+                  <div className="flex gap-2 text-[12px] text-amber-200">
+                    <AlertTriangle size={14} className="flex-shrink-0 mt-0.5 text-amber-300" />
+                    <div>
+                      <div className="font-medium">Push rejected — remote has commits you don't have locally.</div>
+                      <div className="text-amber-100/60 mt-0.5">Choose how to recover:</div>
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <button
+                      onClick={() => runWithStrategy('rebase')}
+                      disabled={running}
+                      className="flex items-center gap-2 px-3 py-2 rounded-md bg-blue-500 hover:bg-blue-400 disabled:opacity-50 text-white text-[12px] font-medium transition-colors"
+                    >
+                      <GitMerge size={13} />
+                      Pull &amp; Rebase, then Push
+                      <span className="ml-auto text-blue-200 font-normal">Recommended</span>
+                    </button>
+                    {!forceConfirm ? (
+                      <button
+                        onClick={() => setForceConfirm(true)}
+                        disabled={running}
+                        className="flex items-center gap-2 px-3 py-2 rounded-md border border-rose-500/30 bg-rose-500/8 text-rose-300 hover:bg-rose-500/15 disabled:opacity-50 text-[12px] font-medium transition-colors"
+                      >
+                        <Zap size={13} />
+                        Force Push
+                      </button>
+                    ) : (
+                      <div className="rounded-md border border-rose-500/30 bg-rose-500/8 p-2.5 space-y-2">
+                        <div className="text-[11px] text-rose-300">This overwrites the remote branch. Remote commits not in your local history will be lost.</div>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => runWithStrategy('force')}
+                            disabled={running}
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-rose-600 hover:bg-rose-500 text-white text-[12px] font-medium disabled:opacity-50"
+                          >
+                            <Zap size={12} /> Confirm Force Push
+                          </button>
+                          <button
+                            onClick={() => setForceConfirm(false)}
+                            className="px-3 py-1.5 rounded border border-wire-2 text-slate-400 hover:text-slate-200 text-[12px]"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {!result && (
                 <div className="text-[12px] text-slate-600">
                   Status and checkpoint results will appear here after an action runs.
