@@ -9,6 +9,7 @@ import { printBanner, logScan, logError } from './banner.js'
 import { getThreats, setThreatStatus, addListener, lastPollTime, dataSources } from './threatMonitor.js'
 import { portScan, PORT_PRESETS, parsePortSpec } from './portScanner.js'
 import { SHERLOCK_SITES } from './sherlockSites.js'
+import { analyzeNetworks } from './wirelessAnalyzer.js'
 
 const app = express()
 const PORT = 3001
@@ -494,6 +495,117 @@ app.post('/api/checkpoint/run', requireApiKey, async (req, res) => {
   } catch (err) {
     const isPushRejected = /rejected|fetch first|non-fast-forward/i.test(err.message || '')
     res.status(500).json({ error: err.message || 'Checkpoint failed', steps, pushRejected: isPushRejected })
+  }
+})
+
+// ── Wireless Scanner ──────────────────────────────────────────────────────────
+
+function parseNetshWifi(raw) {
+  const networks = []
+  let net = null
+  let bssid = null
+
+  for (const rawLine of raw.split('\n')) {
+    const line = rawLine.trim()
+    if (!line) continue
+
+    const g = (pat) => { const m = line.match(pat); return m ? m[1].trim() : null }
+
+    // SSID N : name  (but not BSSID lines)
+    const ssid = g(/^SSID\s+\d+\s*:\s*(.*)$/)
+    if (ssid !== null && !line.startsWith('BSSID')) {
+      if (net) networks.push(net)
+      net = { ssid, authentication: '', encryption: '', networkType: '', bssids: [] }
+      bssid = null
+      continue
+    }
+
+    if (!net) continue
+
+    const nt = g(/^Network type\s*:\s*(.+)$/); if (nt) { net.networkType = nt; continue }
+    const auth = g(/^Authentication\s*:\s*(.+)$/); if (auth) { net.authentication = auth; continue }
+    const enc = g(/^Encryption\s*:\s*(.+)$/); if (enc) { net.encryption = enc; continue }
+
+    const mac = g(/^BSSID\s+\d+\s*:\s*(.+)$/)
+    if (mac) {
+      bssid = { mac, signal: 0, radioType: '', channel: '' }
+      net.bssids.push(bssid)
+      continue
+    }
+
+    if (bssid) {
+      const sig = line.match(/^Signal\s*:\s*(\d+)%/)
+      if (sig) { bssid.signal = parseInt(sig[1]); continue }
+      const rt = g(/^Radio type\s*:\s*(.+)$/); if (rt) { bssid.radioType = rt; continue }
+      const ch = g(/^Channel\s*:\s*(\d+)$/); if (ch) { bssid.channel = ch; continue }
+    }
+  }
+
+  if (net) networks.push(net)
+  return networks
+}
+
+function parseNmcliWifi(raw) {
+  // nmcli -t -f SSID,BSSID,SIGNAL,SECURITY,CHAN dev wifi list
+  // Line format: SSID:AA\:BB\:CC\:DD\:EE\:FF:SIGNAL:SECURITY:CHAN
+  const networks = []
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue
+    const m = line.match(/^(.*):([0-9A-Fa-f]{2}(?:\\:[0-9A-Fa-f]{2}){5}):(\d+):([^:]*):(\d*)$/)
+    if (!m) continue
+    const [, ssid, bssidRaw, signalStr, security, channel] = m
+    const mac = bssidRaw.replace(/\\/g, '')
+    const signal = parseInt(signalStr)
+    const existing = networks.find(n => n.ssid === ssid)
+    if (existing) {
+      existing.bssids.push({ mac, signal, radioType: '', channel })
+    } else {
+      networks.push({
+        ssid,
+        authentication: security || 'Open',
+        encryption: '',
+        networkType: 'Infrastructure',
+        bssids: [{ mac, signal, radioType: '', channel }],
+      })
+    }
+  }
+  return networks
+}
+
+app.get('/api/wireless-scan', requireApiKey, async (req, res) => {
+  try {
+    let networks = []
+
+    if (process.platform === 'win32') {
+      let stdout
+      try {
+        ;({ stdout } = await execFileAsync('netsh', ['wlan', 'show', 'networks', 'mode=bssid'], { timeout: 12000 }))
+      } catch (err) {
+        const msg = ((err.stderr || '') + (err.message || '')).toLowerCase()
+        if (msg.includes('no wireless interface') || msg.includes('wlan autoconfig') || msg.includes('not running')) {
+          return res.status(503).json({ error: 'No wireless interface found. Enable your WiFi adapter and try again.' })
+        }
+        throw err
+      }
+      networks = parseNetshWifi(stdout)
+    } else if (process.platform === 'linux') {
+      try {
+        const { stdout } = await execFileAsync(
+          'nmcli', ['-t', '-f', 'SSID,BSSID,SIGNAL,SECURITY,CHAN', 'dev', 'wifi', 'list'],
+          { timeout: 12000 },
+        )
+        networks = parseNmcliWifi(stdout)
+      } catch {
+        return res.status(503).json({ error: 'nmcli not found. Install NetworkManager to enable wireless scanning.' })
+      }
+    } else {
+      return res.status(501).json({ error: `Wireless scanning is not supported on ${process.platform}.` })
+    }
+
+    const findings = analyzeNetworks(networks)
+    res.json({ networks, findings, scannedAt: new Date().toISOString() })
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'Wireless scan failed' })
   }
 })
 

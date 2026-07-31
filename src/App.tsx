@@ -16,6 +16,7 @@ import { Sherlock } from './pages/tools/Sherlock'
 import { WhoisDnsIntel } from './pages/tools/WhoisDnsIntel'
 import { EmailHarvester } from './pages/tools/EmailHarvester'
 import { BreachSearch } from './pages/tools/BreachSearch'
+import { WirelessAnalyzer } from './pages/tools/WirelessAnalyzer'
 import { ToolPlaceholder } from './pages/tools/ToolPlaceholder'
 import { redTools, blueTools, workflowTools, osintTools } from './data/tools'
 import { useSettings, SESSION_TIMEOUT_MS } from './hooks/useSettings'
@@ -28,7 +29,7 @@ import { ShieldOff, RefreshCw } from 'lucide-react'
 const osintDedicatedIds = new Set(['image-location-finder', 'sherlock', 'whois-dns-intel', 'email-harvester', 'breach-search'])
 
 const placeholderTools = [
-  ...redTools.filter(t => t.id !== 'network-recon' && t.id !== 'vuln-scanner' && t.id !== 'port-scanner'),
+  ...redTools.filter(t => t.id !== 'network-recon' && t.id !== 'vuln-scanner' && t.id !== 'port-scanner' && t.id !== 'wireless-analyzer'),
   ...blueTools.filter(t => t.id !== 'threat-monitor' && t.id !== 'code-checkpoint'),
   ...workflowTools,
   ...osintTools.filter(t => !osintDedicatedIds.has(t.id)),
@@ -60,6 +61,7 @@ function AnimatedRoutes() {
           <Route path="/tools/whois-dns-intel" element={<WhoisDnsIntel />} />
           <Route path="/tools/email-harvester" element={<EmailHarvester />} />
           <Route path="/tools/breach-search" element={<BreachSearch />} />
+          <Route path="/tools/wireless-analyzer" element={<WirelessAnalyzer />} />
           {placeholderTools.map(tool => (
             <Route
               key={tool.id}
