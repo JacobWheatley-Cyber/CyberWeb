@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
 import clsx from 'clsx'
 import {
+  Activity,
   AlertTriangle,
   CheckCircle2,
   Circle,
@@ -13,6 +14,7 @@ import {
   Github,
   GitMerge,
   Link,
+  MessageSquarePlus,
   Play,
   RefreshCw,
   ShieldCheck,
@@ -58,6 +60,18 @@ interface RunResult {
   pushRejected?: boolean
   status?: GitStatus
 }
+
+interface GitCommitEntry {
+  hash: string
+  subject: string
+  when: string
+  author: string
+  files: number
+  insertions: number
+  deletions: number
+}
+
+type NoteSeverity = 'info' | 'low' | 'medium' | 'high' | 'critical'
 
 const statusColor: Record<string, string> = {
   M: 'text-amber-300 border-amber-500/25 bg-amber-500/10',
@@ -110,6 +124,12 @@ export function CodeCheckpoint() {
   const [protectGenerated, setProtectGenerated] = useState(true)
   const [result, setResult] = useState<RunResult | null>(null)
   const [forceConfirm, setForceConfirm] = useState(false)
+  const [commitLog, setCommitLog] = useState<GitCommitEntry[]>([])
+  const [logLoading, setLogLoading] = useState(false)
+  const [noteText, setNoteText] = useState('')
+  const [noteSeverity, setNoteSeverity] = useState<NoteSeverity>('info')
+  const [notePosting, setNotePosting] = useState(false)
+  const [notePosted, setNotePosted] = useState(false)
 
   const origin = useMemo(() => status?.remotes.find(r => r.name === 'origin' && r.kind === 'fetch'), [status])
   const repoUrl = githubRepoUrl(remoteUrl || origin?.url || '')
@@ -134,8 +154,34 @@ export function CodeCheckpoint() {
     }
   }
 
+  async function loadLog() {
+    setLogLoading(true)
+    try {
+      const resp = await apiFetch(`${API}/api/checkpoint/log`)
+      if (resp.ok) setCommitLog(await resp.json())
+    } catch { /* non-fatal */ }
+    finally { setLogLoading(false) }
+  }
+
+  async function postNote() {
+    if (!noteText.trim()) return
+    setNotePosting(true)
+    try {
+      await apiFetch(`${API}/api/checkpoint/note`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: noteText.trim(), severity: noteSeverity }),
+      })
+      setNoteText('')
+      setNotePosted(true)
+      setTimeout(() => setNotePosted(false), 2500)
+    } catch { /* ignore */ }
+    finally { setNotePosting(false) }
+  }
+
   useEffect(() => {
     loadStatus()
+    loadLog()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -152,6 +198,7 @@ export function CodeCheckpoint() {
       if (!resp.ok) throw Object.assign(new Error(data.error || 'Request failed'), { data })
       setResult(data)
       if (data.status) setStatus(data.status)
+      if (data.commit) loadLog()
     } catch (err) {
       const data = (err as Error & { data?: RunResult }).data
       setResult(data || { error: err instanceof Error ? err.message : String(err) })
@@ -400,6 +447,45 @@ export function CodeCheckpoint() {
             )}
           </div>
 
+          <div className="card-surface p-5 space-y-3">
+            <div className="flex items-center gap-2">
+              <MessageSquarePlus size={14} className="text-blue-300" />
+              <h2 className="text-sm font-semibold text-slate-200">Post to Activity Feed</h2>
+            </div>
+            <p className="text-[12px] text-slate-500 leading-relaxed">
+              Write a note that will appear in the dashboard's Recent Activity section.
+            </p>
+            <textarea
+              value={noteText}
+              onChange={e => setNoteText(e.target.value)}
+              placeholder="e.g. Refactored auth module, added rate limiting…"
+              rows={3}
+              className="w-full bg-wire-1 border border-wire-3 rounded-md px-3 py-2 text-[13px] text-slate-300 placeholder:text-slate-600 outline-none focus:border-blue-500/40 focus:bg-surface-3 resize-none"
+            />
+            <div className="flex items-center gap-2">
+              <select
+                value={noteSeverity}
+                onChange={e => setNoteSeverity(e.target.value as NoteSeverity)}
+                className="bg-wire-1 border border-wire-3 rounded-md px-2 py-1.5 text-[12px] text-slate-300 outline-none focus:border-blue-500/40 cursor-pointer"
+              >
+                <option value="info">Info</option>
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+                <option value="critical">Critical</option>
+              </select>
+              <button
+                onClick={postNote}
+                disabled={notePosting || !noteText.trim()}
+                className="flex items-center gap-2 px-4 py-1.5 rounded-md bg-blue-500 hover:bg-blue-400 disabled:bg-wire-2 disabled:text-slate-500 text-white text-[12px] font-medium transition-colors"
+              >
+                {notePosted
+                  ? <><CheckCircle2 size={13} className="text-emerald-300" /> Posted!</>
+                  : <><Activity size={13} /> {notePosting ? 'Posting…' : 'Post Note'}</>}
+              </button>
+            </div>
+          </div>
+
           <div className="card-surface overflow-hidden">
             <div className="flex items-center gap-2 px-5 py-3 border-b border-wire-1">
               <Terminal size={14} className="text-slate-400" />
@@ -481,6 +567,93 @@ export function CodeCheckpoint() {
           </div>
         </motion.div>
       </div>
+
+      {/* ── Commit history ──────────────────────────────────────────────────── */}
+      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
+        <div className="card-surface overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-3 border-b border-wire-1">
+            <div className="flex items-center gap-2">
+              <GitCommit size={14} className="text-blue-300" />
+              <h2 className="text-sm font-semibold text-slate-200">Commit History</h2>
+            </div>
+            <div className="flex items-center gap-3">
+              {commitLog.length > 0 && (
+                <span className="text-[12px] text-slate-500 font-mono">{commitLog.length} commits</span>
+              )}
+              <button
+                onClick={loadLog}
+                disabled={logLoading}
+                className="text-slate-600 hover:text-slate-300 transition-colors disabled:opacity-40"
+                title="Refresh"
+              >
+                <RefreshCw size={13} className={logLoading ? 'animate-spin' : ''} />
+              </button>
+            </div>
+          </div>
+
+          {logLoading && commitLog.length === 0 ? (
+            <div className="px-5 py-8 text-center text-sm text-slate-500">Loading commit history…</div>
+          ) : commitLog.length === 0 ? (
+            <div className="px-5 py-8 text-center">
+              <GitCommit size={22} className="text-slate-700 mx-auto mb-2" />
+              <div className="text-sm text-slate-500">No commits yet</div>
+              <div className="text-[12px] text-slate-600 mt-1">Create your first checkpoint to see history here.</div>
+            </div>
+          ) : (
+            <div className="px-5 py-4 max-h-[420px] overflow-y-auto">
+              <div className="relative ml-1">
+                {/* Vertical track line */}
+                <div className="absolute left-0 top-2 bottom-2 w-px bg-wire-2" />
+
+                {commitLog.map((c) => {
+                  const dotColor =
+                    c.insertions > 0 && c.deletions > 0 ? 'bg-amber-400 border-amber-400'
+                    : c.insertions > 0                  ? 'bg-emerald-400 border-emerald-400'
+                    : c.deletions > 0                   ? 'bg-rose-400 border-rose-400'
+                    :                                     'bg-slate-500 border-slate-500'
+
+                  return (
+                    <div key={c.hash} className="relative pl-6 pb-5 last:pb-0">
+                      {/* Dot on track */}
+                      <div className={clsx(
+                        'absolute left-[-4px] top-[5px] w-[9px] h-[9px] rounded-full border-2 border-surface-0',
+                        dotColor,
+                      )} />
+
+                      {/* Commit content */}
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-mono text-[11px] text-blue-300 bg-blue-500/10 px-1.5 py-0.5 rounded border border-blue-500/20 flex-shrink-0">
+                            {c.hash}
+                          </span>
+                          <span className="text-[13px] text-slate-200 leading-snug">{c.subject}</span>
+                        </div>
+                        <div className="flex items-center gap-2.5 text-[11px] flex-wrap">
+                          <span className="text-slate-500">{c.author}</span>
+                          <span className="text-slate-700">·</span>
+                          <span className="text-slate-600">{c.when}</span>
+                          {c.files > 0 && (
+                            <>
+                              <span className="text-slate-700">·</span>
+                              <span className="text-slate-500">{c.files} file{c.files !== 1 ? 's' : ''}</span>
+                              {c.insertions > 0 && (
+                                <span className="text-emerald-500 font-mono">+{c.insertions}</span>
+                              )}
+                              {c.deletions > 0 && (
+                                <span className="text-rose-500 font-mono">-{c.deletions}</span>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      </motion.div>
     </div>
   )
 }

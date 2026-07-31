@@ -1,10 +1,24 @@
 import { spawn }        from 'child_process'
 import { createInterface } from 'readline'
-import { stat, access }  from 'fs/promises'
+import { stat, access, readFile }  from 'fs/promises'
 import path              from 'path'
 import { fileURLToPath } from 'url'
 
 const __dir = path.dirname(fileURLToPath(import.meta.url))
+
+// Load .env into process.env so child processes inherit the values
+try {
+  const raw = await readFile(path.join(__dir, '.env'), 'utf8')
+  for (const line of raw.split('\n')) {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith('#')) continue
+    const eq = trimmed.indexOf('=')
+    if (eq < 0) continue
+    const key = trimmed.slice(0, eq).trim()
+    const val = trimmed.slice(eq + 1).trim()
+    if (key && !(key in process.env)) process.env[key] = val
+  }
+} catch { /* no .env file — env vars must be set externally */ }
 
 // ── ANSI helpers ──────────────────────────────────────────────────────────────
 const R      = '\x1b[0m'

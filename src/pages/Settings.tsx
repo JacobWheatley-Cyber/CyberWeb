@@ -492,9 +492,6 @@ export function Settings() {
                   </Section>
 
                   <Section title="Server API Key">
-                    <div className="text-[12px] text-slate-500 -mt-1">
-                      Paste the value of <code className="font-mono bg-wire-1 px-1 rounded">CYBERWEB_API_KEY</code> from your <code className="font-mono bg-wire-1 px-1 rounded">.env</code> file. The app will include it in every API request.
-                    </div>
                     <Field label="API key" hint="Must match the server's CYBERWEB_API_KEY">
                       <TextInput
                         value={settings.serverApiKey}

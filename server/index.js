@@ -1,6 +1,20 @@
+import { readFileSync } from 'fs'
 import os from 'os'
 import fs from 'fs/promises'
 import express from 'express'
+
+// Load .env before anything reads process.env
+try {
+  for (const line of readFileSync(new URL('../.env', import.meta.url), 'utf8').split('\n')) {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith('#')) continue
+    const eq = trimmed.indexOf('=')
+    if (eq < 0) continue
+    const key = trimmed.slice(0, eq).trim()
+    const val = trimmed.slice(eq + 1).trim()
+    if (key && !(key in process.env)) process.env[key] = val
+  }
+} catch { /* no .env file — env vars must be set externally */ }
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { scanTarget } from './scanner.js'
@@ -30,11 +44,12 @@ app.use(express.json())
 const API_KEY = process.env.CYBERWEB_API_KEY || ''
 
 if (!API_KEY) {
-  console.warn('[auth] CYBERWEB_API_KEY is not set — all endpoints are unprotected. Set it in .env to enable authentication.')
+  console.error('[auth] CYBERWEB_API_KEY is not set. Add it to your .env file and restart the server.')
+  console.error('[auth] Example:  CYBERWEB_API_KEY=your-secret-key-here')
+  process.exit(1)
 }
 
 function requireApiKey(req, res, next) {
-  if (!API_KEY) return next()
   const provided = req.headers['x-api-key'] || req.query.api_key
   if (provided !== API_KEY) return res.status(401).json({ error: 'Unauthorized' })
   next()
@@ -467,6 +482,7 @@ app.post('/api/checkpoint/run', requireApiKey, async (req, res) => {
       const [hash, subject] = stdout.split('\x00')
       commit = { hash, subject }
       steps.push(`Created commit ${hash}`)
+      addActivity({ type: 'info', severity: 'info', message: `Checkpoint: ${subject} [${hash}]`, tool: 'Code Checkpoint' })
     } else {
       steps.push('No file changes to commit')
     }
@@ -496,6 +512,55 @@ app.post('/api/checkpoint/run', requireApiKey, async (req, res) => {
     const isPushRejected = /rejected|fetch first|non-fast-forward/i.test(err.message || '')
     res.status(500).json({ error: err.message || 'Checkpoint failed', steps, pushRejected: isPushRejected })
   }
+})
+
+app.get('/api/checkpoint/log', requireApiKey, async (_req, res) => {
+  try {
+    if (!(await isGitRepo())) return res.json([])
+    const { stdout } = await git([
+      'log',
+      '--pretty=format:%x00%h%x1f%s%x1f%cr%x1f%an',
+      '--shortstat',
+      '-n', '30',
+    ])
+    const commits = stdout
+      .split('\x00')
+      .filter(Boolean)
+      .map(chunk => {
+        const lines = chunk.trim().split('\n').filter(Boolean)
+        const [hash, subject, when, author] = (lines[0] || '').split('\x1f')
+        const statLine = lines.find(l => l.includes('changed')) || ''
+        const filesMatch = statLine.match(/(\d+) file/)
+        const insMatch   = statLine.match(/(\d+) insertion/)
+        const delMatch   = statLine.match(/(\d+) deletion/)
+        return {
+          hash:       hash?.trim(),
+          subject:    subject?.trim(),
+          when:       when?.trim(),
+          author:     author?.trim(),
+          files:      filesMatch ? parseInt(filesMatch[1]) : 0,
+          insertions: insMatch   ? parseInt(insMatch[1])   : 0,
+          deletions:  delMatch   ? parseInt(delMatch[1])   : 0,
+        }
+      })
+      .filter(c => c.hash)
+    res.json(commits)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.post('/api/checkpoint/note', requireApiKey, (req, res) => {
+  const { message, severity = 'info' } = req.body || {}
+  if (!message?.trim()) return res.status(400).json({ error: 'Message is required' })
+  const valid = ['critical', 'high', 'medium', 'low', 'info']
+  addActivity({
+    type: 'info',
+    severity: valid.includes(severity) ? severity : 'info',
+    message: message.trim(),
+    tool: 'Code Checkpoint',
+  })
+  res.json({ ok: true })
 })
 
 // ── Wireless Scanner ──────────────────────────────────────────────────────────
