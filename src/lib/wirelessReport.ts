@@ -8,6 +8,12 @@ interface WifiFinding {
   remediation: string; tags: string[]; patchSteps: PatchStep[]
 }
 
+function escapeHtml(value: unknown): string {
+  return String(value ?? '').replace(/[&<>"']/g, char => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  })[char] || char)
+}
+
 // ── SVG helpers ───────────────────────────────────────────────────────────────
 
 function polar(cx: number, cy: number, r: number, deg: number) {
@@ -91,15 +97,15 @@ function summaryText(networks: WifiNetwork[], findings: WifiFinding[]): string {
   parts.push(`This wireless security assessment identified <strong>${networks.length} network${networks.length !== 1 ? 's' : ''}</strong> within radio range.`)
 
   if (critical > 0)
-    parts.push(`<strong>${critical} critical-severity finding${critical !== 1 ? 's' : ''}</strong> require immediate remediation — these vulnerabilities can be exploited by an unskilled attacker with freely available tools.`)
+    parts.push(`<strong>${critical} critical-priority observation${critical !== 1 ? 's' : ''}</strong> require owner review. Passive scans do not verify exploitability.`)
   if (high > 0)
-    parts.push(`An additional <strong>${high} high-severity finding${high !== 1 ? 's' : ''}</strong> present significant risk and should be addressed within 24 hours.`)
+    parts.push(`An additional <strong>${high} high-priority observation${high !== 1 ? 's' : ''}</strong> should be validated against approved network settings.`)
   if (openNets > 0)
-    parts.push(`<strong>${openNets} network${openNets !== 1 ? 's are' : ' is'} completely unencrypted</strong> — all traffic on ${openNets !== 1 ? 'these networks' : 'this network'} is visible in plaintext to any nearby device.`)
+    parts.push(`<strong>${openNets} network${openNets !== 1 ? 's advertise' : ' advertises'} open Wi-Fi</strong>. Application traffic may still be protected by TLS or other encryption.`)
   if (wpa3Nets > 0 && findings.length === 0)
-    parts.push(`All networks use modern WPA3 encryption. No immediate remediation actions are required.`)
+    parts.push(`No heuristic findings were generated. This passive scan does not establish that the networks are secure.`)
   else if (findings.length === 0)
-    parts.push(`No exploitable security issues were detected. Continue monitoring and ensure router firmware remains up to date.`)
+    parts.push(`No heuristic findings were generated. Review the inventory against approved network configuration.`)
 
   return parts.join(' ')
 }
@@ -187,13 +193,13 @@ function findingHTML(f: WifiFinding, i: number): string {
     <div style="display:flex;gap:12px;margin-bottom:10px">
       <div style="width:22px;height:22px;border-radius:50%;background:#f1f5f9;border:1px solid #e2e8f0;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#64748b;flex-shrink:0">${j + 1}</div>
       <div>
-        <div style="font-size:13px;font-weight:600;color:#0f172a;margin-bottom:2px">${step.label}</div>
-        <div style="font-size:12px;color:#64748b;line-height:1.5">${step.detail}</div>
+        <div style="font-size:13px;font-weight:600;color:#0f172a;margin-bottom:2px">${escapeHtml(step.label)}</div>
+        <div style="font-size:12px;color:#64748b;line-height:1.5">${escapeHtml(step.detail)}</div>
       </div>
     </div>`).join('')
 
   const tagPills = f.tags.map(t =>
-    `<span style="padding:2px 8px;border-radius:12px;background:#f1f5f9;border:1px solid #e2e8f0;font-size:10px;color:#64748b">${t}</span>`
+    `<span style="padding:2px 8px;border-radius:12px;background:#f1f5f9;border:1px solid #e2e8f0;font-size:10px;color:#64748b">${escapeHtml(t)}</span>`
   ).join(' ')
 
   return `
@@ -201,14 +207,14 @@ function findingHTML(f: WifiFinding, i: number): string {
     <div style="padding:18px 20px;background:${bg}">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
         <span style="padding:3px 10px;border-radius:5px;background:${color};color:white;font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase">${sev}</span>
-        <span style="padding:3px 8px;border-radius:5px;background:white;border:1px solid #e2e8f0;font-size:11px;font-family:monospace;color:#475569">CVSS ${f.cvss.toFixed(1)}</span>
+        <span style="padding:3px 8px;border-radius:5px;background:white;border:1px solid #e2e8f0;font-size:11px;font-family:monospace;color:#475569">Rule score ${f.cvss.toFixed(1)}</span>
         <span style="font-size:11px;color:#94a3b8">Finding ${i + 1}</span>
       </div>
-      <div style="font-size:16px;font-weight:700;color:#0f172a;margin-bottom:5px">${f.title}</div>
+      <div style="font-size:16px;font-weight:700;color:#0f172a;margin-bottom:5px">${escapeHtml(f.title)}</div>
       <div style="font-size:12px;color:#94a3b8">
-        ${f.ssid ? `<strong style="color:#475569">${f.ssid}</strong>` : '<em>Hidden Network</em>'}
-        ${f.authentication ? ` &middot; ${f.authentication}` : ''}
-        ${f.encryption ? ` &middot; ${f.encryption}` : ''}
+        ${f.ssid ? `<strong style="color:#475569">${escapeHtml(f.ssid)}</strong>` : '<em>Hidden Network</em>'}
+        ${f.authentication ? ` &middot; ${escapeHtml(f.authentication)}` : ''}
+        ${f.encryption ? ` &middot; ${escapeHtml(f.encryption)}` : ''}
         ${f.bssids.length > 0 ? ` &middot; ${f.bssids.length} AP${f.bssids.length !== 1 ? 's' : ''}` : ''}
       </div>
       ${tagPills ? `<div style="margin-top:10px;display:flex;gap:5px;flex-wrap:wrap">${tagPills}</div>` : ''}
@@ -216,11 +222,11 @@ function findingHTML(f: WifiFinding, i: number): string {
     <div style="padding:18px 20px;background:white;border-top:1px solid ${border}">
       <div style="margin-bottom:14px">
         <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#94a3b8;margin-bottom:6px">Description</div>
-        <div style="font-size:13px;color:#475569;line-height:1.65">${f.description}</div>
+        <div style="font-size:13px;color:#475569;line-height:1.65">${escapeHtml(f.description)}</div>
       </div>
       <div style="margin-bottom:${f.patchSteps.length > 0 ? '18px' : '0'}">
         <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#94a3b8;margin-bottom:6px">Remediation Summary</div>
-        <div style="font-size:13px;color:#475569;line-height:1.65">${f.remediation}</div>
+        <div style="font-size:13px;color:#475569;line-height:1.65">${escapeHtml(f.remediation)}</div>
       </div>
       ${f.patchSteps.length > 0 ? `
       <div>
@@ -245,9 +251,9 @@ function networkTableHTML(networks: WifiNetwork[], findings: WifiFinding[]): str
       const best = getBest(n)
       return `
       <tr>
-        <td style="padding:10px 14px;font-weight:600;color:#0f172a">${n.ssid || '<em style="color:#94a3b8">Hidden</em>'}</td>
-        <td style="padding:10px 14px"><span style="padding:2px 9px;border-radius:5px;background:${color}18;color:${color};font-size:11px;font-weight:700;border:1px solid ${color}30">${label}</span></td>
-        <td style="padding:10px 14px;font-size:12px;color:#475569">${n.encryption || '—'}</td>
+        <td style="padding:10px 14px;font-weight:600;color:#0f172a">${n.ssid ? escapeHtml(n.ssid) : '<em style="color:#94a3b8">Hidden</em>'}</td>
+        <td style="padding:10px 14px"><span style="padding:2px 9px;border-radius:5px;background:${color}18;color:${color};font-size:11px;font-weight:700;border:1px solid ${color}30">${escapeHtml(label)}</span></td>
+        <td style="padding:10px 14px;font-size:12px;color:#475569">${escapeHtml(n.encryption || '—')}</td>
         <td style="padding:10px 14px;font-size:12px;color:#475569">${getChannel(n)}</td>
         <td style="padding:10px 14px">${signalBarsHTML(best)}</td>
         <td style="padding:10px 14px;font-size:12px;color:#64748b;text-align:center">${n.bssids.length}</td>
@@ -294,9 +300,9 @@ export function generateHTMLReport(networks: WifiNetwork[], findings: WifiFindin
     : counts.high > 0 ? 'HIGH'
     : counts.medium > 0 ? 'MEDIUM'
     : counts.low > 0 ? 'LOW'
-    : 'SECURE'
+    : 'NO FLAGS'
 
-  const riskColor = { CRITICAL: '#ef4444', HIGH: '#f97316', MEDIUM: '#f59e0b', LOW: '#94a3b8', SECURE: '#22c55e' }[overallRisk]!
+  const riskColor = { CRITICAL: '#ef4444', HIGH: '#f97316', MEDIUM: '#f59e0b', LOW: '#94a3b8', 'NO FLAGS': '#64748b' }[overallRisk]!
 
   const donut = buildDonut(counts, total)
   const protocolChart = buildProtocolChart(networks)
@@ -348,7 +354,7 @@ export function generateHTMLReport(networks: WifiNetwork[], findings: WifiFindin
     </div>
     <div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px">
       <div style="padding:8px 20px;border-radius:8px;background:${riskColor};font-size:13px;font-weight:800;letter-spacing:.08em;text-transform:uppercase">
-        ${overallRisk} RISK
+        ${overallRisk}${overallRisk === 'NO FLAGS' ? '' : ' PRIORITY'}
       </div>
       <div style="font-size:12px;color:#64748b">${networks.length} networks &nbsp;·&nbsp; ${total} finding${total !== 1 ? 's' : ''}</div>
     </div>
@@ -415,8 +421,8 @@ export function generateHTMLReport(networks: WifiNetwork[], findings: WifiFindin
     <div style="width:56px;height:56px;border-radius:50%;background:#f0fdf4;border:2px solid #bbf7d0;display:flex;align-items:center;justify-content:center;margin:0 auto 16px">
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
     </div>
-    <h3 style="font-size:18px;font-weight:700;color:#0f172a;margin-bottom:8px">No Security Issues Detected</h3>
-    <p style="font-size:14px;color:#64748b">All ${networks.length} network${networks.length !== 1 ? 's' : ''} passed security checks. Continue monitoring and ensure firmware stays up to date.</p>
+    <h3 style="font-size:18px;font-weight:700;color:#0f172a;margin-bottom:8px">No Heuristic Flags</h3>
+    <p style="font-size:14px;color:#64748b">This passive inventory of ${networks.length} network${networks.length !== 1 ? 's' : ''} did not generate a rule match. Review owned network settings separately.</p>
   </div>`}
 
   <!-- ── Network Inventory ── -->

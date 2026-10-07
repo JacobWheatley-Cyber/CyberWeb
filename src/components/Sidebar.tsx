@@ -5,6 +5,7 @@ import { ChevronDown, ChevronRight, LayoutDashboard, Settings } from 'lucide-rea
 import clsx from 'clsx'
 import { Logo } from './Logo'
 import { redTools, blueTools, workflowTools, osintTools } from '../data/tools'
+import { isImplementedTool } from '../data/availability'
 import type { Tool } from '../types'
 
 interface SidebarProps {
@@ -62,6 +63,7 @@ function NavItem({ tool, collapsed }: NavItemProps) {
               </motion.span>
             )}
           </AnimatePresence>
+          {!collapsed && !isImplementedTool(tool.id) && <span className="ml-auto text-[10px] text-amber-500/80">Planned</span>}
         </>
       )}
     </NavLink>

@@ -13,12 +13,12 @@ import { PortScanner } from './pages/tools/PortScanner'
 import { CodeCheckpoint } from './pages/tools/CodeCheckpoint'
 import { ImageLocationFinder } from './pages/tools/ImageLocationFinder'
 import { Sherlock } from './pages/tools/Sherlock'
-import { WhoisDnsIntel } from './pages/tools/WhoisDnsIntel'
-import { EmailHarvester } from './pages/tools/EmailHarvester'
-import { BreachSearch } from './pages/tools/BreachSearch'
 import { WirelessAnalyzer } from './pages/tools/WirelessAnalyzer'
+import { PayloadBuilder } from './pages/tools/PayloadBuilder'
 import { ToolPlaceholder } from './pages/tools/ToolPlaceholder'
-import { redTools, blueTools, workflowTools, osintTools } from './data/tools'
+import { ToolManual } from './components/ToolManual'
+import { allTools } from './data/tools'
+import { isImplementedTool } from './data/availability'
 import { useSettings, SESSION_TIMEOUT_MS } from './hooks/useSettings'
 import { SettingsContext } from './context/SettingsContext'
 import { useProfile } from './hooks/useProfile'
@@ -26,17 +26,11 @@ import { ProfileContext } from './context/ProfileContext'
 import { Profile } from './pages/Profile'
 import { ShieldOff, RefreshCw } from 'lucide-react'
 
-const osintDedicatedIds = new Set(['image-location-finder', 'sherlock', 'whois-dns-intel', 'email-harvester', 'breach-search'])
-
-const placeholderTools = [
-  ...redTools.filter(t => t.id !== 'network-recon' && t.id !== 'vuln-scanner' && t.id !== 'port-scanner' && t.id !== 'wireless-analyzer'),
-  ...blueTools.filter(t => t.id !== 'threat-monitor' && t.id !== 'code-checkpoint'),
-  ...workflowTools,
-  ...osintTools.filter(t => !osintDedicatedIds.has(t.id)),
-]
+const placeholderTools = allTools.filter(t => !isImplementedTool(t.id))
 
 function AnimatedRoutes() {
   const location = useLocation()
+  const currentTool = allTools.find(tool => tool.path === location.pathname)
   return (
     <AnimatePresence mode="wait" initial={false}>
       <motion.div
@@ -47,6 +41,7 @@ function AnimatedRoutes() {
         transition={{ duration: 0.18 }}
         className="min-h-full"
       >
+        {currentTool && <ToolManual key={currentTool.id} tool={currentTool} />}
         <Routes location={location}>
           <Route path="/" element={<Dashboard />} />
           <Route path="/settings" element={<Settings />} />
@@ -58,10 +53,8 @@ function AnimatedRoutes() {
           <Route path="/tools/code-checkpoint" element={<CodeCheckpoint />} />
           <Route path="/tools/image-location-finder" element={<ImageLocationFinder />} />
           <Route path="/tools/sherlock" element={<Sherlock />} />
-          <Route path="/tools/whois-dns-intel" element={<WhoisDnsIntel />} />
-          <Route path="/tools/email-harvester" element={<EmailHarvester />} />
-          <Route path="/tools/breach-search" element={<BreachSearch />} />
           <Route path="/tools/wireless-analyzer" element={<WirelessAnalyzer />} />
+          <Route path="/tools/payload-builder" element={<PayloadBuilder />} />
           {placeholderTools.map(tool => (
             <Route
               key={tool.id}
@@ -96,9 +89,9 @@ function SessionExpiredOverlay({ onResume }: { onResume: () => void }) {
           </div>
         </div>
         <div>
-          <h2 className="text-lg font-semibold text-slate-100">Session Locked</h2>
+          <h2 className="text-lg font-semibold text-slate-100">Interface Paused</h2>
           <p className="text-[13px] text-slate-500 mt-1">
-            Your session has been locked due to inactivity.
+            The interface was hidden after inactivity. API access remains controlled by the server key.
           </p>
         </div>
         <button

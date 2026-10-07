@@ -7,6 +7,7 @@ import {
   Cpu, MemoryStick, Activity, Server, Clock,
 } from 'lucide-react'
 import { redTools, blueTools } from '../data/tools'
+import { isImplementedTool } from '../data/availability'
 import { useSettingsContext } from '../context/SettingsContext'
 import { apiFetch } from '../lib/api'
 
@@ -88,6 +89,7 @@ export function Dashboard() {
   const [health, setHealth] = useState<HealthData | null>(null)
   const [activity, setActivity] = useState<ActivityEntry[]>([])
   const [apiOnline, setApiOnline] = useState(false)
+  const [apiAuthRequired, setApiAuthRequired] = useState(false)
 
   const now = new Date()
   const hour = now.getHours()
@@ -107,10 +109,18 @@ export function Dashboard() {
           apiFetch('/api/activity'),
         ])
         if (cancelled) return
-        if (hRes.ok) { setHealth(await hRes.json()); setApiOnline(true) }
+        if (hRes.ok) {
+          setHealth(await hRes.json())
+          setApiOnline(true)
+          setApiAuthRequired(false)
+        } else {
+          setHealth(null)
+          setApiOnline(false)
+          setApiAuthRequired(hRes.status === 401)
+        }
         if (aRes.ok) setActivity(await aRes.json())
       } catch {
-        if (!cancelled) setApiOnline(false)
+        if (!cancelled) { setApiOnline(false); setApiAuthRequired(false); setHealth(null) }
       }
     }
 
@@ -121,7 +131,7 @@ export function Dashboard() {
 
   const metrics = [
     {
-      label: 'Scans Run',
+      label: 'Scans This Session',
       value: health ? String(health.totalScansRun) : '—',
       sub: health ? `${health.activeScans.length} active` : 'API offline',
       color: 'blue' as const,
@@ -144,7 +154,7 @@ export function Dashboard() {
     {
       label: 'API Uptime',
       value: health ? formatUptime(health.uptimeSeconds) : '—',
-      sub: apiOnline ? 'Online' : 'Offline',
+      sub: apiOnline ? 'Online' : apiAuthRequired ? 'API key required' : 'Offline',
       color: apiOnline ? 'green' as const : 'red' as const,
       Icon: Clock,
     },
@@ -171,10 +181,11 @@ export function Dashboard() {
         </div>
         <div className="text-right hidden sm:block">
           <div className="text-[12px] text-slate-500 font-mono uppercase tracking-wider">API Server</div>
-          <div className={clsx('text-sm font-semibold flex items-center justify-end gap-1.5 mt-0.5', apiOnline ? 'text-emerald-400' : 'text-slate-600')}>
+          <div className={clsx('text-sm font-semibold flex items-center justify-end gap-1.5 mt-0.5', apiOnline ? 'text-emerald-400' : apiAuthRequired ? 'text-amber-400' : 'text-slate-600')}>
             <span className={clsx('h-1.5 w-1.5 rounded-full', apiOnline ? 'bg-emerald-400 animate-status-ping' : 'bg-slate-600')} />
-            {apiOnline ? 'ONLINE' : 'OFFLINE'}
+            {apiOnline ? 'ONLINE' : apiAuthRequired ? 'KEY REQUIRED' : 'OFFLINE'}
           </div>
+          {apiAuthRequired && <button onClick={() => navigate('/settings')} className="text-xs text-amber-400 hover:underline">Open Settings → Security</button>}
         </div>
       </motion.div>
 
@@ -357,6 +368,7 @@ export function Dashboard() {
                 )}>
                 <Icon size={18} className={isRed ? 'text-rose-400' : 'text-blue-400'} />
                 <span className="text-[11px] text-slate-400 text-center leading-tight font-medium">{tool.name}</span>
+                {!isImplementedTool(tool.id) && <span className="text-[10px] text-amber-500">Planned</span>}
               </motion.button>
             )
           })}

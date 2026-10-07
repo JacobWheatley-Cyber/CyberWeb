@@ -225,32 +225,9 @@ async function main() {
     write('\n')
     write(SEP + '\n')
     write(`  ${BGREEN}◆${R}  ${B}${WHITE}All systems operational${R}  ${GRAY}— press Ctrl+C to stop${R}\n`)
-    write(`  ${DIM}${GRAY}◆  Endpoints: /api/scan  /api/vuln-scan  /api/port-scan  /api/threats  /api/phishing${R}\n`)
+    write(`  ${DIM}${GRAY}◆  Endpoints: /api/scan  /api/vuln-scan  /api/port-scan  /api/threats${R}\n`)
     write(SEP + '\n')
     write('\n')
-    // Poll for tunnel URL (localtunnel starts 2 s after server boot)
-    waitForTunnel()
-  }
-
-  async function waitForTunnel() {
-    write(`  ${YELLOW}○${R}  ${GRAY}Establishing public tunnel…${R}\n`)
-    for (let i = 0; i < 24; i++) {
-      await sleep(500)
-      try {
-        const r = await fetch('http://localhost:3001/api/phishing/tunnel')
-        const { url, status } = await r.json()
-        if (status === 'connected' && url) {
-          // Erase the "Establishing…" line and replace with the URL
-          write(`\x1b[1A\x1b[2K\r  ${BGREEN}●${R}  ${B}${WHITE}Public Tunnel${R}    ${GRAY}→${R}  ${BCYAN}${url}${R}  ${BGREEN}active${R}\n\n`)
-          return
-        }
-        if (status === 'error') {
-          write(`\x1b[1A\x1b[2K\r  ${YELLOW}●${R}  ${GRAY}Tunnel unavailable — set URL manually in Phishing Payload Builder${R}\n\n`)
-          return
-        }
-      } catch { /* server not ready yet */ }
-    }
-    write(`\x1b[1A\x1b[2K\r  ${YELLOW}●${R}  ${GRAY}Tunnel timed out — set URL manually in Phishing Payload Builder${R}\n\n`)
   }
 
   // ── API server ──────────────────────────────────────────────────────────────

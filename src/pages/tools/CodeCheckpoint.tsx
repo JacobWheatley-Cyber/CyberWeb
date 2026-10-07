@@ -26,7 +26,7 @@ import {
 
 import { apiFetch } from '../../lib/api'
 
-const API = 'http://localhost:3001'
+const API = ''
 
 interface GitChange {
   code: string
@@ -120,10 +120,11 @@ export function CodeCheckpoint() {
   const [message, setMessage] = useState(defaultMessage)
   const [remoteUrl, setRemoteUrl] = useState('')
   const [branch, setBranch] = useState('main')
-  const [push, setPush] = useState(true)
+  const [push, setPush] = useState(false)
   const [protectGenerated, setProtectGenerated] = useState(true)
   const [result, setResult] = useState<RunResult | null>(null)
   const [forceConfirm, setForceConfirm] = useState(false)
+  const [confirmRun, setConfirmRun] = useState(false)
   const [commitLog, setCommitLog] = useState<GitCommitEntry[]>([])
   const [logLoading, setLogLoading] = useState(false)
   const [noteText, setNoteText] = useState('')
@@ -147,8 +148,10 @@ export function CodeCheckpoint() {
         const originFetch = data.remotes.find((r: GitRemote) => r.name === 'origin' && r.kind === 'fetch')
         if (originFetch) setRemoteUrl(originFetch.url)
       }
+      return true
     } catch (err) {
       setResult({ error: err instanceof Error ? err.message : String(err) })
+      return false
     } finally {
       setLoading(false)
     }
@@ -202,6 +205,7 @@ export function CodeCheckpoint() {
     } catch (err) {
       const data = (err as Error & { data?: RunResult }).data
       setResult(data || { error: err instanceof Error ? err.message : String(err) })
+      void loadStatus()
     } finally {
       setRunning(false)
     }
@@ -213,14 +217,19 @@ export function CodeCheckpoint() {
 
   function runCheckpoint() {
     setForceConfirm(false)
+    if (!confirmRun) {
+      void loadStatus().then(ok => { if (ok) setConfirmRun(true) })
+      return
+    }
+    setConfirmRun(false)
     post('/api/checkpoint/run', {
       message,
       push,
       remote: 'origin',
       branch,
-      initIfNeeded: true,
       remoteUrl,
       protectGenerated,
+      expectedChanges: status?.changes ?? [],
     })
   }
 
@@ -231,10 +240,10 @@ export function CodeCheckpoint() {
       push: true,
       remote: 'origin',
       branch,
-      initIfNeeded: false,
       remoteUrl,
       protectGenerated,
       pushStrategy,
+      expectedChanges: status?.changes ?? [],
     })
   }
 
@@ -312,7 +321,7 @@ export function CodeCheckpoint() {
                 <label className="text-[12px] font-medium text-slate-500 uppercase tracking-wider">GitHub Remote</label>
                 <input
                   value={remoteUrl}
-                  onChange={e => setRemoteUrl(e.target.value)}
+                  onChange={e => { setRemoteUrl(e.target.value); setConfirmRun(false) }}
                   placeholder="https://github.com/user/repo.git"
                   className="w-full bg-wire-1 border border-wire-3 rounded-md px-3 py-2 text-[13px] text-slate-300 placeholder:text-slate-600 font-mono outline-none focus:border-blue-500/40 focus:bg-surface-3"
                 />
@@ -321,7 +330,7 @@ export function CodeCheckpoint() {
                 <label className="text-[12px] font-medium text-slate-500 uppercase tracking-wider">Branch</label>
                 <input
                   value={branch}
-                  onChange={e => setBranch(e.target.value)}
+                  onChange={e => { setBranch(e.target.value); setConfirmRun(false) }}
                   placeholder="main"
                   className="w-full bg-wire-1 border border-wire-3 rounded-md px-3 py-2 text-[13px] text-slate-300 placeholder:text-slate-600 font-mono outline-none focus:border-blue-500/40 focus:bg-surface-3"
                 />
@@ -332,18 +341,18 @@ export function CodeCheckpoint() {
               <label className="text-[12px] font-medium text-slate-500 uppercase tracking-wider">Commit Message</label>
               <input
                 value={message}
-                onChange={e => setMessage(e.target.value)}
+                onChange={e => { setMessage(e.target.value); setConfirmRun(false) }}
                 className="w-full bg-wire-1 border border-wire-3 rounded-md px-3 py-2 text-[13px] text-slate-300 placeholder:text-slate-600 outline-none focus:border-blue-500/40 focus:bg-surface-3"
               />
             </div>
 
             <div className="flex flex-wrap items-center gap-3">
               <label className="flex items-center gap-2 px-3 py-2 rounded-md border border-wire-2 bg-wire-1 text-[12px] text-slate-300">
-                <input type="checkbox" checked={push} onChange={e => setPush(e.target.checked)} className="accent-blue-500" />
+                <input type="checkbox" checked={push} onChange={e => { setPush(e.target.checked); setConfirmRun(false) }} className="accent-blue-500" />
                 Push after commit
               </label>
               <label className="flex items-center gap-2 px-3 py-2 rounded-md border border-wire-2 bg-wire-1 text-[12px] text-slate-300">
-                <input type="checkbox" checked={protectGenerated} onChange={e => setProtectGenerated(e.target.checked)} className="accent-blue-500" />
+                <input type="checkbox" checked={protectGenerated} onChange={e => { setProtectGenerated(e.target.checked); setConfirmRun(false) }} className="accent-blue-500" />
                 Protect generated files
               </label>
             </div>
@@ -351,12 +360,13 @@ export function CodeCheckpoint() {
             <div className="flex flex-wrap items-center gap-3 pt-1">
               <button
                 onClick={runCheckpoint}
-                disabled={running}
+                disabled={running || !status?.repo}
                 className="flex items-center gap-2 px-5 py-2 rounded-md bg-blue-500 hover:bg-blue-400 disabled:bg-wire-2 disabled:text-slate-500 text-white text-sm font-medium transition-colors"
               >
                 <Play size={14} />
-                {running ? 'Working...' : push ? 'Checkpoint & Push' : 'Create Checkpoint'}
+                {running ? 'Working...' : !status?.repo ? 'Initialize repository first' : confirmRun ? 'Confirm files and run' : push ? 'Review Checkpoint & Push' : 'Review Checkpoint'}
               </button>
+              {confirmRun && <p className="w-full text-xs text-amber-300">Review the {dirtyCount} listed file changes, branch {branch}, and {push ? `push to ${remoteUrl || origin?.url || 'the configured remote'}` : 'local commit'} before confirming.</p>}
               <button
                 onClick={initRepo}
                 disabled={running}

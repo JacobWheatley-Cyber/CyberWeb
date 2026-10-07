@@ -1,5 +1,6 @@
 import { useState, useRef, useMemo } from 'react'
-import { apiUrl } from '../../lib/api'
+import { ApiEventSource, describeApiError } from '../../lib/api'
+import { csvRow } from '../../lib/csv'
 import { motion, AnimatePresence } from 'framer-motion'
 import clsx from 'clsx'
 import {
@@ -28,6 +29,9 @@ interface PortResult {
   risk: Risk
   mitre: MitreTechnique[]
   recommendations: string[]
+  serviceSource?: string
+  latencyMs?: number | null
+  tls?: { protocol: string | null; validTo: string | null; subject: string | null } | null
 }
 
 interface ScanMeta {
@@ -81,8 +85,8 @@ function exportJson(meta: ScanMeta | null, ports: PortResult[]) {
 
 function exportCsv(meta: ScanMeta | null, ports: PortResult[]) {
   const rows = [
-    'Port,Status,Service,Risk,Banner',
-    ...ports.map(p => [p.port, p.status, p.service, p.risk, `"${p.banner.replace(/"/g, "'").replace(/\n/g, ' ')}"`].join(',')),
+    'Port,Status,Service,Review Priority,Banner',
+    ...ports.map(p => csvRow([p.port, p.status, p.service, p.risk, p.banner])),
   ]
   const blob = new Blob([rows.join('\n')], { type: 'text/csv' })
   const a = document.createElement('a')
@@ -98,7 +102,7 @@ function exportText(meta: ScanMeta | null, ports: PortResult[]) {
     `Host   : ${meta?.hostname || '—'}`,
     `Ports  : ${meta?.totalPorts} scanned`,
     '',
-    'PORT      STATE      SERVICE         RISK',
+    'PORT      STATE      SERVICE         PRIORITY',
     '─'.repeat(56),
     ...ports
       .filter(p => p.status === 'open')
@@ -157,10 +161,15 @@ function PortDetail({ port, onClose }: { port: PortResult; onClose: () => void }
           </span>
           {port.risk !== 'none' && (
             <span className={clsx('text-[11px] font-semibold px-2 py-0.5 rounded border uppercase tracking-wider', rc.badge)}>
-              {rc.label} risk
+              {rc.label} review priority
             </span>
           )}
         </div>
+
+        {port.status === 'open' && <div className="text-xs text-slate-500 space-y-1">
+          <p>Service label: {port.serviceSource || 'port hint'}{port.latencyMs != null ? ` · TCP connect ${port.latencyMs} ms` : ''}</p>
+          {port.tls && <p>TLS: {port.tls.protocol || 'unknown'}{port.tls.subject ? ` · certificate CN ${port.tls.subject}` : ''}{port.tls.validTo ? ` · expires ${port.tls.validTo}` : ''}</p>}
+        </div>}
 
         {/* Banner */}
         {port.banner && (
@@ -284,7 +293,7 @@ function PortRow({ port, selected, onSelect, isNew }: {
 const PRESET_PORT_COUNTS: Record<string, number> = { Quick: 20, Standard: 54, Thorough: 104 }
 
 export function PortScanner() {
-  const [target, setTarget]       = useState('')
+  const [target, setTarget]       = useState(() => new URLSearchParams(window.location.search).get('target') || '')
   const [mode, setMode]           = useState<'Quick' | 'Standard' | 'Thorough' | 'Custom'>('Standard')
   const [customPorts, setCustomPorts] = useState('')
   const [timeoutMs, setTimeoutMs] = useState(1000)
@@ -303,7 +312,7 @@ export function PortScanner() {
   const [newPorts, setNewPorts]   = useState<Set<number>>(new Set())
   const [sortBy, setSortBy]       = useState<'port' | 'risk' | 'status'>('port')
 
-  const esRef        = useRef<EventSource | null>(null)
+  const esRef        = useRef<ApiEventSource | null>(null)
   const startTimeRef = useRef(0)
   const doneRef      = useRef(false)
   const totalRef     = useRef(0)
@@ -360,7 +369,7 @@ export function PortScanner() {
       params.set('mode', mode)
     }
 
-    const es = new EventSource(apiUrl(`http://localhost:3001/api/port-scan?${params}`))
+    const es = new ApiEventSource(`/api/port-scan?${params}`)
     esRef.current = es
 
     es.addEventListener('start', e => {
@@ -373,12 +382,10 @@ export function PortScanner() {
       const p: PortResult = JSON.parse((e as MessageEvent).data)
       scannedRef.current++
       setProgress(Math.round((scannedRef.current / (totalRef.current || 1)) * 100))
-      if (p.status === 'open' || showClosed) {
-        setPorts(prev => [...prev, p])
-        if (p.status === 'open') {
-          setNewPorts(prev => new Set([...prev, p.port]))
-          setTimeout(() => setNewPorts(prev => { const s = new Set(prev); s.delete(p.port); return s }), 3000)
-        }
+      setPorts(prev => [...prev, p])
+      if (p.status === 'open') {
+        setNewPorts(prev => new Set([...prev, p.port]))
+        setTimeout(() => setNewPorts(prev => { const s = new Set(prev); s.delete(p.port); return s }), 3000)
       }
     })
 
@@ -389,11 +396,6 @@ export function PortScanner() {
       setScanTime(`${((Date.now() - startTimeRef.current) / 1000).toFixed(1)}s`)
       setRunning(false)
       es.close()
-      // Load ALL ports for the closed/filtered toggle
-      setPorts(prev => {
-        // already have open; summary tells us total
-        return prev
-      })
     })
 
     es.addEventListener('scan_error', e => {
@@ -402,9 +404,9 @@ export function PortScanner() {
       es.close()
     })
 
-    es.onerror = () => {
+    es.onerror = error => {
       if (doneRef.current) return
-      setError('Cannot connect to the API server. Is it running on port 3001?')
+      setError(describeApiError(error))
       setRunning(false)
       es.close()
     }
@@ -436,7 +438,7 @@ export function PortScanner() {
             </span>
           </div>
           <p className="text-sm text-slate-400 mt-1">
-            Real TCP port probing with service detection, banner grabbing, risk classification, and MITRE ATT&CK mapping.
+            TCP connect checks, bounded banner and TLS probes, and evidence-based service labels. Priority is a review cue, not a vulnerability verdict.
           </p>
         </div>
       </motion.div>
@@ -564,7 +566,7 @@ export function PortScanner() {
                 { label: 'Open',     value: summary ? summary.open : openPorts.length, mono: false, color: 'text-emerald-400' },
                 { label: 'Closed',   value: summary?.closed ?? '…',                 mono: false, color: 'text-slate-600' },
                 { label: 'Filtered', value: summary?.filtered ?? '…',               mono: false, color: 'text-amber-500' },
-                { label: 'Host Risk',value: risk === 'none' ? '—' : rc.label,       mono: false, color: rc.badge.split(' ')[0] },
+                { label: 'Review Priority',value: risk === 'none' ? '—' : rc.label, mono: false, color: rc.badge.split(' ')[0] },
               ].map(s => (
                 <div key={s.label} className="card-surface px-4 py-3">
                   <div className="text-[11px] text-slate-600 uppercase tracking-wider mb-1">{s.label}</div>

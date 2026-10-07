@@ -1,12 +1,13 @@
 import { useState, useRef } from 'react'
-import { apiUrl } from '../../lib/api'
+import { ApiEventSource } from '../../lib/api'
 import { motion, AnimatePresence } from 'framer-motion'
 import clsx from 'clsx'
 import {
   Users, Search, ExternalLink, Copy, Check, Download,
   ChevronDown, ChevronRight, AlertCircle, Loader2,
   Code2, Gamepad2, Music, Video, Briefcase, BookOpen,
-  ShoppingBag, Link2, Dumbbell, Cpu, Share2, Eye, type LucideIcon,
+  ShoppingBag, Link2, Dumbbell, Cpu, Share2, Eye, ShieldCheck,
+  type LucideIcon,
 } from 'lucide-react'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -20,6 +21,8 @@ interface SiteResult {
   responseTime?: number
   httpStatus?: number
   error?: string
+  browserVerified?: boolean
+  verifyReason?: string
 }
 
 interface CorrelationSignal {
@@ -106,7 +109,6 @@ function analyzeCorrelation(found: SiteResult[], username: string): {
 
   const confidence = Math.min(Math.max(signals.reduce((a, s) => a + s.weight, 0), 0), 95)
 
-  // Identity tags from platform patterns
   const foundNames = new Set(found.map(r => r.name))
   const tags: string[] = []
   const devSites   = ['GitHub','GitLab','Dev.to','HackerRank','LeetCode','npm','PyPI','HuggingFace','Stack Exchange']
@@ -182,6 +184,9 @@ function CategorySection({ cat, results, collapsed, onToggle }: {
                   </span>
                   {r.found ? (
                     <>
+                      {r.browserVerified && (
+                        <ShieldCheck size={10} className="text-emerald-500 flex-shrink-0" />
+                      )}
                       <span className="text-[10px] text-slate-600 font-mono flex-shrink-0 tabular-nums">
                         {r.responseTime ? `${r.responseTime}ms` : ''}
                       </span>
@@ -222,7 +227,7 @@ function UncertainSection({ sites, collapsed, onToggle }: {
           {sites.length} sites
         </span>
         <div className="flex-1 h-px bg-wire-1 mx-1" />
-        <span className="text-[10px] text-slate-600 mr-1">Server-side checking not possible for these platforms</span>
+        <span className="text-[10px] text-slate-600 mr-1">Bot-protected — browser check inconclusive</span>
         {collapsed ? <ChevronRight size={12} className="text-slate-600" /> : <ChevronDown size={12} className="text-slate-600" />}
       </button>
       <AnimatePresence initial={false}>
@@ -231,9 +236,8 @@ function UncertainSection({ sites, collapsed, onToggle }: {
             transition={{ duration: 0.22 }} className="overflow-hidden border-t border-amber-500/15">
             <div className="px-4 py-2 bg-amber-500/5 border-b border-amber-500/10">
               <p className="text-[11px] text-amber-400/70">
-                These platforms use client-side rendering (React/Next.js SPAs) or aggressive bot protection.
-                The server always returns HTTP 200 regardless of whether the account exists.
-                Click the links below to verify manually in your browser.
+                These platforms use bot-detection that blocks automated checks. The browser attempt was inconclusive.
+                Click each link to verify manually in your browser.
               </p>
             </div>
             <div className="divide-y divide-wire-1">
@@ -259,20 +263,239 @@ function UncertainSection({ sites, collapsed, onToggle }: {
   )
 }
 
+// ── Scanning progress card ────────────────────────────────────────────────────
+
+function ScanProgressCard({
+  running, verifying, done,
+  progress, total, verifyProgress, verifyTotal,
+  found, uncertain, checked,
+  lastSite, lastVerifiedSite,
+}: {
+  running: boolean; verifying: boolean; done: boolean
+  progress: number; total: number
+  verifyProgress: number; verifyTotal: number
+  found: number; uncertain: number; checked: number
+  lastSite: string; lastVerifiedSite: string
+}) {
+  const scanPct  = total > 0 ? Math.round((progress / total) * 100) : 0
+  const verPct   = verifyTotal > 0 ? Math.round((verifyProgress / verifyTotal) * 100) : 0
+  const phase1Done = progress >= total && total > 0
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -6 }}
+      className="card-surface overflow-hidden"
+    >
+      {/* Top accent bar */}
+      <div className="h-[2px] bg-wire-1 relative overflow-hidden">
+        <motion.div
+          className={clsx('absolute inset-y-0 left-0', done ? 'bg-emerald-500' : 'bg-orange-500')}
+          animate={{ width: done ? '100%' : verifying ? `${verPct}%` : `${scanPct}%` }}
+          transition={{ ease: 'easeOut', duration: 0.3 }}
+        />
+        {!done && (
+          <motion.div
+            className="absolute inset-y-0 w-16 bg-gradient-to-r from-transparent via-white/20 to-transparent"
+            animate={{ x: ['-64px', '600px'] }}
+            transition={{ repeat: Infinity, duration: 1.8, ease: 'linear' }}
+          />
+        )}
+      </div>
+
+      <div className="p-5 space-y-5">
+        {/* Phase rows */}
+        <div className="space-y-3">
+          {/* Phase 1 */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className={clsx(
+                  'w-1.5 h-1.5 rounded-full',
+                  phase1Done ? 'bg-emerald-400' : running ? 'bg-orange-400 animate-pulse' : 'bg-slate-600'
+                )} />
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                  Phase 1 — Platform Scan
+                </span>
+              </div>
+              <span className={clsx('text-[11px] font-mono tabular-nums', phase1Done ? 'text-emerald-400' : 'text-slate-400')}>
+                {progress} / {total}
+              </span>
+            </div>
+            <div className="h-1.5 bg-wire-2 rounded-full overflow-hidden">
+              <motion.div
+                animate={{ width: `${scanPct}%` }}
+                transition={{ ease: 'easeOut', duration: 0.25 }}
+                className={clsx('h-full rounded-full transition-colors', phase1Done ? 'bg-emerald-500' : 'bg-orange-500')}
+              />
+            </div>
+            {/* Ticker */}
+            <div className="h-4 overflow-hidden">
+              <AnimatePresence mode="popLayout">
+                {!phase1Done && lastSite && (
+                  <motion.p
+                    key={lastSite}
+                    initial={{ y: 12, opacity: 0 }}
+                    animate={{ y: 0, opacity: 1 }}
+                    exit={{ y: -12, opacity: 0 }}
+                    transition={{ duration: 0.2 }}
+                    className="text-[10px] text-slate-600 font-mono truncate"
+                  >
+                    checking: <span className="text-slate-500">{lastSite}</span>
+                  </motion.p>
+                )}
+                {phase1Done && (
+                  <motion.p
+                    key="done1"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    className="text-[10px] text-emerald-600"
+                  >
+                    Complete
+                  </motion.p>
+                )}
+              </AnimatePresence>
+            </div>
+          </div>
+
+          {/* Phase 2 */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className={clsx(
+                  'w-1.5 h-1.5 rounded-full',
+                  done ? 'bg-emerald-400' :
+                  verifying ? 'bg-violet-400 animate-pulse' : 'bg-slate-700'
+                )} />
+                <span className={clsx(
+                  'text-[11px] font-semibold uppercase tracking-wider',
+                  verifying || done ? 'text-slate-400' : 'text-slate-600'
+                )}>
+                  Phase 2 — Browser Verification
+                </span>
+              </div>
+              <span className={clsx(
+                'text-[11px] font-mono tabular-nums',
+                done ? 'text-emerald-400' :
+                verifying ? 'text-violet-400' : 'text-slate-600'
+              )}>
+                {verifying || done
+                  ? `${verifyProgress} / ${verifyTotal}`
+                  : 'pending'}
+              </span>
+            </div>
+            <div className="h-1.5 bg-wire-2 rounded-full overflow-hidden">
+              <motion.div
+                animate={{ width: done ? '100%' : `${verPct}%` }}
+                transition={{ ease: 'easeOut', duration: 0.25 }}
+                className={clsx(
+                  'h-full rounded-full transition-colors',
+                  done ? 'bg-emerald-500' : 'bg-violet-500'
+                )}
+              />
+            </div>
+            <div className="h-4 overflow-hidden">
+              <AnimatePresence mode="popLayout">
+                {verifying && lastVerifiedSite && (
+                  <motion.p
+                    key={lastVerifiedSite}
+                    initial={{ y: 12, opacity: 0 }}
+                    animate={{ y: 0, opacity: 1 }}
+                    exit={{ y: -12, opacity: 0 }}
+                    transition={{ duration: 0.2 }}
+                    className="text-[10px] text-slate-600 font-mono truncate"
+                  >
+                    verifying: <span className="text-violet-400/70">{lastVerifiedSite}</span>
+                  </motion.p>
+                )}
+                {!verifying && !done && (
+                  <motion.p key="wait2" className="text-[10px] text-slate-700">
+                    Starts after scan completes
+                  </motion.p>
+                )}
+                {done && (
+                  <motion.p key="done2" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-[10px] text-emerald-600">
+                    Complete
+                  </motion.p>
+                )}
+              </AnimatePresence>
+            </div>
+          </div>
+        </div>
+
+        {/* Stat row */}
+        <div className="flex items-center gap-4 pt-1 border-t border-wire-1">
+          <div className="flex items-center gap-1.5">
+            <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+            <span className="text-[11px] text-slate-400">
+              <span className="font-bold text-emerald-400">{found}</span> confirmed
+            </span>
+          </div>
+          {uncertain > 0 && (
+            <div className="flex items-center gap-1.5">
+              <div className="w-1.5 h-1.5 rounded-full bg-amber-400/60" />
+              <span className="text-[11px] text-slate-400">
+                <span className="font-bold text-amber-400">{uncertain}</span> manual check
+              </span>
+            </div>
+          )}
+          <div className="flex items-center gap-1.5">
+            <div className="w-1.5 h-1.5 rounded-full bg-slate-600" />
+            <span className="text-[11px] text-slate-600">{checked} checked</span>
+          </div>
+          {!done && (
+            <div className="ml-auto flex items-center gap-1.5">
+              <Loader2 size={10} className={clsx('animate-spin', verifying ? 'text-violet-400' : 'text-orange-400')} />
+              <span className="text-[10px] text-slate-600">
+                {verifying ? 'Verifying with browser…' : 'Scanning…'}
+              </span>
+            </div>
+          )}
+          {done && (
+            <div className="ml-auto flex items-center gap-1.5">
+              <ShieldCheck size={11} className="text-emerald-500" />
+              <span className="text-[10px] text-emerald-600">All results browser-verified</span>
+            </div>
+          )}
+        </div>
+      </div>
+    </motion.div>
+  )
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export function Sherlock() {
-  const [username, setUsername] = useState('')
-  const [running, setRunning] = useState(false)
-  const [results, setResults] = useState<SiteResult[]>([])
-  const [progress, setProgress] = useState(0)
-  const [total, setTotal] = useState(0)
-  const [done, setDone] = useState(false)
-  const [activeFilter, setActiveFilter] = useState<string | null>(null)
+  const [username, setUsername]           = useState('')
+  const [running, setRunning]             = useState(false)
+  const [results, setResults]             = useState<SiteResult[]>([])
+  const [progress, setProgress]           = useState(0)
+  const [total, setTotal]                 = useState(0)
+  const [verifyProgress, setVerifyProgress] = useState(0)
+  const [verifyTotal, setVerifyTotal]     = useState(0)
+  const [verifying, setVerifying]         = useState(false)
+  const [done, setDone]                   = useState(false)
+  const [activeFilter, setActiveFilter]   = useState<string | null>(null)
   const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set())
   const [uncertainCollapsed, setUncertainCollapsed] = useState(true)
-  const [showNotFound, setShowNotFound] = useState(false)
-  const esRef = useRef<EventSource | null>(null)
+  const [showNotFound, setShowNotFound]   = useState(false)
+  const [lastSite, setLastSite]           = useState('')
+  const [lastVerifiedSite, setLastVerifiedSite] = useState('')
+  const esRef = useRef<ApiEventSource | null>(null)
+
+  // Upsert a result by name (handles both new results and verify updates)
+  function upsertResult(d: SiteResult) {
+    setResults(prev => {
+      const idx = prev.findIndex(r => r.name === d.name)
+      if (idx >= 0) {
+        const next = [...prev]
+        next[idx] = d
+        return next
+      }
+      return [...prev, d]
+    })
+  }
 
   function startSearch() {
     const q = username.trim()
@@ -282,54 +505,85 @@ export function Sherlock() {
     setResults([])
     setProgress(0)
     setTotal(0)
+    setVerifyProgress(0)
+    setVerifyTotal(0)
+    setVerifying(false)
     setDone(false)
     setRunning(true)
     setCollapsedCats(new Set())
     setUncertainCollapsed(true)
     setActiveFilter(null)
+    setLastSite('')
+    setLastVerifiedSite('')
 
-    const es = new EventSource(apiUrl(`http://localhost:3001/api/sherlock?username=${encodeURIComponent(q)}`))
+    const es = new ApiEventSource(`/api/sherlock?username=${encodeURIComponent(q)}`)
     esRef.current = es
 
     es.addEventListener('start', (e) => {
       const d = JSON.parse((e as MessageEvent).data)
       setTotal(d.total)
     })
+
     es.addEventListener('result', (e) => {
       const d: SiteResult = JSON.parse((e as MessageEvent).data)
-      setResults(prev => [...prev, d])
+      upsertResult(d)
       setProgress(prev => prev + 1)
+      setLastSite(d.name)
     })
+
+    es.addEventListener('verify_start', (e) => {
+      const d = JSON.parse((e as MessageEvent).data)
+      setVerifyTotal(d.total)
+      setVerifying(true)
+    })
+
+    es.addEventListener('verify_result', (e) => {
+      const d: SiteResult = JSON.parse((e as MessageEvent).data)
+      upsertResult(d)
+      setVerifyProgress(prev => prev + 1)
+      setLastVerifiedSite(d.name)
+    })
+
     es.addEventListener('complete', () => {
-      setRunning(false); setDone(true); es.close()
+      setRunning(false)
+      setVerifying(false)
+      setDone(true)
+      es.close()
     })
+
     es.addEventListener('scan_error', () => {
-      setRunning(false); es.close()
+      setRunning(false)
+      setVerifying(false)
+      es.close()
     })
+
     es.onerror = () => {
-      setRunning(false); es.close()
+      setRunning(false)
+      setVerifying(false)
+      es.close()
     }
   }
 
   function cancelSearch() {
     esRef.current?.close()
     setRunning(false)
+    setVerifying(false)
   }
 
-  const uncertain = results.filter(r => r.uncertain)
-  const checked = results.filter(r => !r.uncertain)
-  const found = checked.filter(r => r.found)
-  const correlation = done && found.length > 0 ? analyzeCorrelation(found, username.trim()) : null
+  const uncertain      = results.filter(r => r.uncertain)
+  const checked        = results.filter(r => !r.uncertain)
+  const found          = checked.filter(r => r.found)
+  const correlation    = done && found.length > 0 ? analyzeCorrelation(found, username.trim()) : null
   const displayResults = showNotFound ? checked : found
-  const allCats = [...new Set(checked.map(r => r.category))]
-  const filteredCats = activeFilter ? [activeFilter] : allCats
-  const catGroups = filteredCats.reduce((acc, cat) => {
+  const allCats        = [...new Set(checked.map(r => r.category))]
+  const filteredCats   = activeFilter ? [activeFilter] : allCats
+  const catGroups      = filteredCats.reduce((acc, cat) => {
     const catResults = displayResults.filter(r => r.category === cat)
     if (catResults.length > 0) acc[cat] = catResults
     return acc
   }, {} as Record<string, SiteResult[]>)
 
-  const pct = total > 0 ? Math.round((progress / total) * 100) : 0
+  const isActive = running || verifying
 
   function exportResults() {
     const q = username.trim()
@@ -339,9 +593,9 @@ export function Sherlock() {
       `Confirmed: ${found.length} | Manual-check: ${uncertain.length} | Checked: ${checked.length}`,
       '',
       '=== CONFIRMED ACCOUNTS ===',
-      ...found.map(r => `[${r.category.toUpperCase()}] ${r.name}: ${r.url}`),
+      ...found.map(r => `[${r.category.toUpperCase()}] ${r.name}: ${r.url}${r.browserVerified ? ' [browser-verified]' : ''}`),
       '',
-      '=== MANUAL VERIFICATION (server-side check not possible) ===',
+      '=== MANUAL VERIFICATION (bot-protected platforms) ===',
       ...uncertain.map(r => `[${r.category.toUpperCase()}] ${r.name}: ${r.url}`),
       '',
       '=== NOT FOUND ===',
@@ -390,7 +644,7 @@ export function Sherlock() {
               className="w-full bg-surface-0 border border-wire-2 rounded-md pl-7 pr-3 py-2 text-sm text-slate-200 placeholder-slate-600 font-mono focus:outline-none focus:border-orange-500/50 transition-colors"
             />
           </div>
-          {running ? (
+          {isActive ? (
             <button onClick={cancelSearch}
               className="flex items-center gap-2 px-4 py-2 rounded-md bg-rose-500/20 hover:bg-rose-500/30 text-rose-400 text-sm font-medium transition-colors border border-rose-500/20">
               Cancel
@@ -402,28 +656,27 @@ export function Sherlock() {
             </button>
           )}
         </div>
-
-        <AnimatePresence>
-          {(running || done) && results.length > 0 && (
-            <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }}
-              exit={{ opacity: 0, height: 0 }} className="space-y-1.5 overflow-hidden">
-              <div className="h-1 bg-wire-2 rounded-full overflow-hidden">
-                <motion.div animate={{ width: `${pct}%` }} transition={{ ease: 'easeOut', duration: 0.2 }}
-                  className={clsx('h-full rounded-full', done ? 'bg-emerald-500' : 'bg-orange-400')} />
-              </div>
-              <div className="flex items-center justify-between text-[11px] text-slate-600">
-                <span className="flex items-center gap-1.5">
-                  {running && <Loader2 size={11} className="animate-spin text-orange-400" />}
-                  {running
-                    ? `Checking ${progress} / ${total} platforms…`
-                    : `Complete — ${found.length} confirmed · ${uncertain.length} manual-check · ${checked.length - found.length} not found`}
-                </span>
-                <span>{pct}%</span>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
       </motion.div>
+
+      {/* ── Scanning progress card ── */}
+      <AnimatePresence>
+        {(isActive || (done && results.length > 0)) && (
+          <ScanProgressCard
+            running={running}
+            verifying={verifying}
+            done={done}
+            progress={progress}
+            total={total}
+            verifyProgress={verifyProgress}
+            verifyTotal={verifyTotal}
+            found={found.length}
+            uncertain={uncertain.length}
+            checked={checked.length}
+            lastSite={lastSite}
+            lastVerifiedSite={lastVerifiedSite}
+          />
+        )}
+      </AnimatePresence>
 
       {/* Correlation analysis */}
       <AnimatePresence>
@@ -434,7 +687,6 @@ export function Sherlock() {
               <span className="text-[12px] font-semibold text-slate-300">Correlation Analysis</span>
             </div>
             <div className="p-5 space-y-4">
-              {/* Confidence bar */}
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between text-[11px]">
                   <span className="text-slate-500">Same-person confidence</span>
@@ -453,7 +705,6 @@ export function Sherlock() {
                 </div>
               </div>
 
-              {/* Identity tags */}
               {correlation.identityTags.length > 0 && (
                 <div className="flex flex-wrap gap-1.5">
                   {correlation.identityTags.map(tag => (
@@ -464,7 +715,6 @@ export function Sherlock() {
                 </div>
               )}
 
-              {/* Evidence signals */}
               <div className="space-y-2">
                 {correlation.signals.map(sig => (
                   <div key={sig.label} className={clsx('flex gap-3 p-3 rounded-lg border text-[11px]',
@@ -479,7 +729,6 @@ export function Sherlock() {
                 ))}
               </div>
 
-              {/* Manual steps */}
               <div className="pt-2 border-t border-wire-1 space-y-1 text-[11px] text-slate-600">
                 <p className="font-semibold uppercase tracking-wider mb-1.5">Increase confidence manually</p>
                 <p>→ Compare profile photos across found platforms</p>
@@ -498,7 +747,6 @@ export function Sherlock() {
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-3">
             {/* Controls bar */}
             <div className="flex flex-wrap items-center gap-2">
-              {/* Stats */}
               <div className="flex gap-2">
                 {[
                   { label: 'Confirmed', value: found.length, color: 'text-emerald-400' },
@@ -513,7 +761,6 @@ export function Sherlock() {
                 ) : null)}
               </div>
 
-              {/* Category filter pills */}
               <div className="flex flex-wrap gap-1 flex-1 min-w-0">
                 <button onClick={() => setActiveFilter(null)}
                   className={clsx('text-[11px] px-2 py-1 rounded border transition-colors',
@@ -534,7 +781,6 @@ export function Sherlock() {
                 })}
               </div>
 
-              {/* Action buttons */}
               <div className="flex gap-1 flex-shrink-0">
                 <button onClick={() => setShowNotFound(v => !v)}
                   className={clsx('text-[11px] px-2.5 py-1.5 rounded border transition-colors',
@@ -566,10 +812,10 @@ export function Sherlock() {
                     return next
                   })} />
               ))}
-              {Object.keys(catGroups).length === 0 && !running && uncertain.length === 0 && (
+              {Object.keys(catGroups).length === 0 && !isActive && uncertain.length === 0 && (
                 <div className="card-surface p-6 text-center">
                   <AlertCircle size={20} className="text-slate-700 mx-auto mb-2" />
-                  <p className="text-[13px] text-slate-500">No accounts found yet.</p>
+                  <p className="text-[13px] text-slate-500">No accounts found.</p>
                 </div>
               )}
               <UncertainSection
@@ -583,7 +829,7 @@ export function Sherlock() {
       </AnimatePresence>
 
       {/* Empty state */}
-      {!running && results.length === 0 && (
+      {!isActive && results.length === 0 && (
         <div className="card-surface py-16 flex flex-col items-center gap-3 text-center">
           <Users size={36} className="text-slate-700" />
           <p className="text-[13px] text-slate-500">Enter a username to hunt across 200+ platforms.</p>

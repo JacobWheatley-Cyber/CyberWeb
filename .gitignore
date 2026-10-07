@@ -1,7 +1,9 @@
 .claude/
 node_modules/
 dist/
+.cyberweb-data/
 .env
 .env.*
+!.env.example
 *.log
 .DS_Store

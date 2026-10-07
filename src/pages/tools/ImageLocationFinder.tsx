@@ -833,6 +833,7 @@ export function ImageLocationFinder() {
   const geoSpyKey = settings.apiKeys['GeoSpy'] ?? ''
 
   const [dragging, setDragging] = useState(false)
+  const [allowExternalUpload, setAllowExternalUpload] = useState(false)
   const [file, setFile] = useState<File | null>(null)
   const [preview, setPreview] = useState<string | null>(null)
   const [signals, setSignals] = useState<SignalResult[]>([])
@@ -898,7 +899,7 @@ export function ImageLocationFinder() {
       detail: 'Running Tesseract OCR…',
     }
 
-    const geospySignal: SignalResult = geoSpyKey ? {
+    const geospySignal: SignalResult = geoSpyKey && allowExternalUpload ? {
       id: 'geospy', icon: Globe, name: 'GeoSpy AI Geolocation',
       description: 'Visual scene fingerprinting via GeoSpy API',
       status: 'running', confidence: 0, finding: null,
@@ -907,7 +908,7 @@ export function ImageLocationFinder() {
       id: 'geospy', icon: Globe, name: 'GeoSpy AI Geolocation',
       description: 'Visual scene fingerprinting via GeoSpy API',
       status: 'unavailable', confidence: 0, finding: null,
-      detail: 'Add your GeoSpy API key in Settings → API Keys to enable visual geolocation.',
+      detail: geoSpyKey ? 'External image upload was not enabled for this analysis.' : 'Add your GeoSpy API key in Settings → API Keys to enable visual geolocation.',
     }
 
     setSignals([...exifSignals, ocrSignal, geospySignal])
@@ -917,7 +918,7 @@ export function ImageLocationFinder() {
       .then(patch => patchSignal('ocr', patch, aid))
       .catch(() => patchSignal('ocr', { status: 'not-found', finding: null, detail: 'OCR failed — image may be too small or low contrast.' }, aid))
 
-    if (geoSpyKey) {
+    if (geoSpyKey && allowExternalUpload) {
       runGeoSpy(f, geoSpyKey)
         .then(patch => patchSignal('geospy', patch, aid))
         .catch(() => patchSignal('geospy', { status: 'not-found', finding: null, detail: 'GeoSpy request failed — check network or API key.' }, aid))
@@ -928,7 +929,7 @@ export function ImageLocationFinder() {
     e.preventDefault(); setDragging(false)
     const f = e.dataTransfer.files[0]
     if (f?.type.startsWith('image/')) processFile(f)
-  }, [geoSpyKey])  // eslint-disable-line react-hooks/exhaustive-deps
+  }, [geoSpyKey, allowExternalUpload])  // eslint-disable-line react-hooks/exhaustive-deps
 
   function clear() {
     analysisId.current++
@@ -962,7 +963,7 @@ export function ImageLocationFinder() {
               <span className="text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded border text-orange-400 bg-orange-500/10 border-orange-500/20">
                 Geolocation
               </span>
-              {geoSpyKey && (
+              {geoSpyKey && allowExternalUpload && (
                 <span className="text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded border text-emerald-400 bg-emerald-500/10 border-emerald-500/20">
                   GeoSpy Active
                 </span>
@@ -995,6 +996,11 @@ export function ImageLocationFinder() {
 
         {/* ── Left column: upload / preview + estimate + privacy ──────────────── */}
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.07 }} className="lg:col-span-1 space-y-4">
+
+          {geoSpyKey && <label className="card-surface flex items-start gap-2 p-3 text-xs text-slate-400">
+            <input type="checkbox" checked={allowExternalUpload} onChange={e => setAllowExternalUpload(e.target.checked)} className="mt-0.5" />
+            <span>Send selected images to GeoSpy for visual geolocation. Leave off to analyze locally only.</span>
+          </label>}
 
           {/* Upload zone or image preview */}
           {!file ? (

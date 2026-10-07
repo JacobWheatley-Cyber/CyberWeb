@@ -7,7 +7,7 @@ import {
   Radio, WifiOff, Database, ShieldCheck,
 } from 'lucide-react'
 import type { ThreatEntry } from '../../types'
-import { apiFetch, apiUrl } from '../../lib/api'
+import { apiFetch, ApiEventSource } from '../../lib/api'
 
 interface DataSources {
   blocklist: boolean
@@ -27,7 +27,7 @@ const SEV = {
 
 const STATUS_CFG: Record<ThreatEntry['status'], string> = {
   active:        'text-rose-400 bg-rose-500/10 border-rose-500/20',
-  blocked:       'text-emerald-400 bg-emerald-500/10 border-emerald-500/20',
+  acknowledged: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20',
   monitoring:    'text-blue-400 bg-blue-500/10 border-blue-500/20',
   investigating: 'text-amber-400 bg-amber-500/10 border-amber-500/20',
   resolved:      'text-slate-500 bg-wire-1 border-wire-2',
@@ -271,14 +271,14 @@ function ThreatDetail({ threat, onClose, onStatusChange }: {
 
       {/* Actions */}
       <div className="flex-shrink-0 border-t border-wire-1 p-4 space-y-2">
-        {threat.status !== 'blocked' && (
+        {threat.status !== 'acknowledged' && (
           <button
-            onClick={() => act('blocked')}
+            onClick={() => act('acknowledged')}
             disabled={busy !== null}
             className="w-full flex items-center justify-center gap-2 py-2 rounded-md text-sm font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 transition-colors disabled:opacity-50"
           >
-            {busy === 'blocked' ? <RefreshCw size={13} className="animate-spin" /> : <Shield size={13} />}
-            Block Source IP
+            {busy === 'acknowledged' ? <RefreshCw size={13} className="animate-spin" /> : <Shield size={13} />}
+            Acknowledge alert
           </button>
         )}
         {threat.status !== 'investigating' && threat.status !== 'resolved' && (
@@ -318,7 +318,7 @@ export function ThreatMonitor() {
   const [statusFilter, setStatusFilter] = useState<ThreatEntry['status'] | 'all'>('all')
   const [lastRefresh, setLastRefresh] = useState(Date.now())
   const [sources, setSources] = useState<DataSources | null>(null)
-  const eventSourceRef = useRef<EventSource | null>(null)
+  const eventSourceRef = useRef<ApiEventSource | null>(null)
 
   // Initial load
   const load = useCallback(async () => {
@@ -340,7 +340,7 @@ export function ThreatMonitor() {
 
   // SSE stream for live threats
   useEffect(() => {
-    const es = new EventSource(apiUrl('http://localhost:3001/api/threats/stream'))
+    const es = new ApiEventSource('/api/threats/stream')
     eventSourceRef.current = es
 
     es.addEventListener('threat', (e: MessageEvent) => {
@@ -375,7 +375,7 @@ export function ThreatMonitor() {
 
   const criticalCount = threats.filter(t => t.severity === 'critical').length
   const activeCount   = threats.filter(t => t.status === 'active').length
-  const blockedCount  = threats.filter(t => t.status === 'blocked').length
+  const acknowledgedCount = threats.filter(t => t.status === 'acknowledged').length
   const newCount      = newIds.size
 
   return (
@@ -417,7 +417,7 @@ export function ThreatMonitor() {
         {[
           { label: 'Total Threats', value: threats.length, color: 'text-slate-200',  icon: Activity },
           { label: 'Active',        value: activeCount,    color: 'text-rose-400',    icon: AlertTriangle },
-          { label: 'Blocked',       value: blockedCount,   color: 'text-emerald-400', icon: Shield },
+          { label: 'Acknowledged', value: acknowledgedCount, color: 'text-emerald-400', icon: Shield },
           { label: 'Critical',      value: criticalCount,  color: 'text-rose-400',    icon: ShieldOff },
         ].map((s, i) => {
           const Icon = s.icon
@@ -456,7 +456,7 @@ export function ThreatMonitor() {
             </div>
             <div className="flex items-center gap-2">
               <div className="flex gap-1 flex-wrap">
-                {(['all', 'active', 'blocked', 'monitoring', 'investigating'] as const).map(s => (
+                {(['all', 'active', 'acknowledged', 'monitoring', 'investigating'] as const).map(s => (
                   <button key={s} onClick={() => setStatusFilter(s)}
                     className={clsx('px-2.5 py-1.5 rounded text-[11px] font-medium capitalize border transition-all duration-150',
                       statusFilter === s ? 'bg-slate-700/50 text-slate-200 border-slate-600' : 'text-slate-500 border-wire-2 hover:text-slate-300')}>

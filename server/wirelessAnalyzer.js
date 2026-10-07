@@ -32,7 +32,7 @@ const WIFI_RULES = [
     },
     severity: 'critical', cvss: 9.8,
     title: 'Open Network — No Encryption',
-    description: (n) => `"${n.ssid || '(Hidden)'}" broadcasts with no encryption. Every byte of traffic — HTTP requests, credentials, session tokens, DNS queries, emails — is transmitted in plaintext and visible to anyone within radio range using free tools.`,
+    description: (n) => `"${n.ssid || '(Hidden)'}" advertises an open Wi-Fi link without link-layer encryption. Applications using TLS or another secure protocol may still encrypt their traffic. Confirm this network is in your assessment scope before reviewing its configuration.`,
     remediation: 'Enable WPA3-Personal immediately. If hardware does not support WPA3, use WPA2-Personal with AES/CCMP. Never transmit sensitive data over this network until encryption is enabled.',
     tags: ['no-encryption', 'passive-intercept', 'credential-exposure'],
     exploitSteps: [

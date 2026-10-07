@@ -7,9 +7,9 @@ import {
   Radio, Shield, Layers, Zap, X, Pencil,
 } from 'lucide-react'
 import clsx from 'clsx'
-import { apiFetch, apiUrl } from '../../lib/api'
+import { apiFetch, ApiEventSource } from '../../lib/api'
 
-const API = 'http://localhost:3001'
+const API = ''
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -674,7 +674,7 @@ export function PhishingPayloadBuilder() {
   const [publicBaseUrl,   setPublicBaseUrl]   = useState<string>(() => localStorage.getItem(LS_KEY) || '')
   const [autoUrl,         setAutoUrl]         = useState<string>('')
   const [autoStatus,      setAutoStatus]      = useState<TunnelStatus>('starting')
-  const esRef = useRef<EventSource | null>(null)
+  const esRef = useRef<ApiEventSource | null>(null)
 
   useEffect(() => {
     apiFetch(`${API}/api/phishing/campaigns`).then(r => r.json()).then(setCampaigns).catch(() => {})
@@ -689,7 +689,7 @@ export function PhishingPayloadBuilder() {
   }, [])
 
   useEffect(() => {
-    const es = new EventSource(apiUrl(`${API}/api/phishing/stream`))
+    const es = new ApiEventSource(`${API}/api/phishing/stream`)
     esRef.current = es
     es.addEventListener('open',  () => setSseConnected(true))
     es.addEventListener('error', () => setSseConnected(false))

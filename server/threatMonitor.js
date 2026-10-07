@@ -2,10 +2,10 @@ import { exec } from 'child_process'
 import { promisify } from 'util'
 import https from 'https'
 import http from 'http'
-import { createHash } from 'crypto'
 import { writeFileSync, unlinkSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
+import { loadLocalJson, saveLocalJson } from './localStore.js'
 
 const execAsync = promisify(exec)
 
@@ -53,24 +53,6 @@ async function refreshBlocklist() {
   }
 }
 
-// ── Geo enrichment (deterministic, no API needed) ─────────────────────────────
-
-const GEO_TABLE = [
-  { country: 'Russia',      city: 'Moscow',      asn: 'AS16276', asnName: 'OVH SAS',        risk: 'High' },
-  { country: 'China',       city: 'Shanghai',    asn: 'AS4837',  asnName: 'China Unicom',    risk: 'Critical' },
-  { country: 'Netherlands', city: 'Amsterdam',   asn: 'AS4134',  asnName: 'Chinanet',        risk: 'High' },
-  { country: 'Ukraine',     city: 'Kyiv',        asn: 'AS28917', asnName: 'Fiord Networks',  risk: 'High' },
-  { country: 'Brazil',      city: 'São Paulo',   asn: 'AS7738',  asnName: 'Telemar',         risk: 'Medium' },
-  { country: 'Romania',     city: 'Bucharest',   asn: 'AS9050',  asnName: 'ROMTELECOM',      risk: 'High' },
-  { country: 'Iran',        city: 'Tehran',      asn: 'AS48159', asnName: 'TCI',             risk: 'Critical' },
-  { country: 'Germany',     city: 'Frankfurt',   asn: 'AS24940', asnName: 'Hetzner Online',  risk: 'Medium' },
-  { country: 'Bulgaria',    city: 'Sofia',       asn: 'AS34224', asnName: 'Neterra Ltd',     risk: 'High' },
-  { country: 'France',      city: 'Paris',       asn: 'AS16276', asnName: 'OVH SAS',         risk: 'Medium' },
-]
-
-function ipHash(ip) {
-  return parseInt(createHash('md5').update(String(ip)).digest('hex').slice(0, 8), 16)
-}
 
 function isPrivate(ip) {
   if (!ip) return true
@@ -81,17 +63,8 @@ function isPrivate(ip) {
     s.startsWith('fe80') || s.startsWith('::') || s === '-'
 }
 
-function getGeo(ip) {
-  if (isPrivate(ip)) return { country: 'Internal', city: 'LAN', asn: '—', asnName: 'Private Network', risk: 'Low' }
-  return GEO_TABLE[ipHash(ip) % GEO_TABLE.length]
-}
-
-function getReputation(ip, isC2 = false) {
-  if (isPrivate(ip)) return { score: 8, tor: false, malware: false, scanner: false, proxy: false, botnet: false }
-  const h = ipHash(ip)
-  const score = isC2 ? Math.floor((h % 8) + 90) : Math.floor((h % 35) + 48)
-  return { score, tor: isC2 || Boolean(h & 1), malware: isC2 || score > 78, scanner: (h & 3) === 0, proxy: score > 72, botnet: isC2 }
-}
+function getGeo() { return null }
+function getReputation() { return null }
 
 // ── Source 1: netstat → check against Feodo Tracker ──────────────────────────
 
@@ -144,7 +117,7 @@ async function scanNetworkConnections() {
     return threats
   } catch (err) {
     console.warn(`\x1b[33m[threats]\x1b[0m netstat failed: ${err.message}`)
-    return []
+    return null
   }
 }
 
@@ -208,7 +181,7 @@ $out | ConvertTo-Json -Compress
     } else {
       console.warn(`\x1b[33m[threats]\x1b[0m Event log: access denied (run server as Administrator to enable)`)
     }
-    return []
+    return null
   } finally {
     try { unlinkSync(tmpFile) } catch {}
   }
@@ -216,8 +189,19 @@ $out | ConvertTo-Json -Compress
 
 // ── Threat store & polling ────────────────────────────────────────────────────
 
-const store = new Map()
+const THREAT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
+const MAX_THREATS = 1000
+const restored = loadLocalJson('threats.json', [])
+const store = new Map((Array.isArray(restored) ? restored : [])
+  .filter(t => t && typeof t.id === 'string' && Number.isFinite(Date.parse(t.timestamp)) &&
+    Date.now() - Date.parse(t.timestamp) < THREAT_RETENTION_MS)
+  .slice(-MAX_THREATS).map(t => [t.id, t]))
 const listeners = new Set()
+
+function persistThreats() {
+  try { saveLocalJson('threats.json', [...store.values()]) }
+  catch (err) { console.warn(`[threats] Could not save local history: ${err.message}`) }
+}
 
 function broadcast(event, data) {
   for (const fn of listeners) fn(event, data)
@@ -225,8 +209,13 @@ function broadcast(event, data) {
 
 export let lastPollTime = null
 export let dataSources = { blocklist: false, netstat: false, eventLog: false, blocklistSize: 0 }
+let polling = false
+let started = false
 
 async function poll() {
+  if (polling) return
+  polling = true
+  try {
   await refreshBlocklist()
 
   const [netThreats, evtThreats] = await Promise.all([
@@ -237,11 +226,11 @@ async function poll() {
   dataSources = {
     blocklist: blocklistOk,
     blocklistSize: c2Map.size,
-    netstat: true,
-    eventLog: evtThreats.length >= 0, // true if query ran (even 0 results)
+    netstat: netThreats !== null,
+    eventLog: evtThreats !== null,
   }
 
-  for (const t of [...netThreats, ...evtThreats]) {
+  for (const t of [...(netThreats ?? []), ...(evtThreats ?? [])]) {
     const existing = store.get(t.id)
     if (!existing) {
       store.set(t.id, t)
@@ -253,13 +242,25 @@ async function poll() {
     }
   }
 
+  for (const [id, threat] of store) {
+    if (Date.now() - Date.parse(threat.timestamp) >= THREAT_RETENTION_MS) store.delete(id)
+  }
+  while (store.size > MAX_THREATS) store.delete(store.keys().next().value)
+  persistThreats()
+
   lastPollTime = new Date().toISOString()
   console.log(`\x1b[36m[threats]\x1b[0m Poll complete — ${store.size} active threat(s)`)
+  } finally {
+    polling = false
+  }
 }
 
-// Initial poll then every 30s
-poll()
-setInterval(poll, 30_000)
+export function startThreatMonitor() {
+  if (started) return
+  started = true
+  void poll().catch(err => console.warn(`[threats] Poll failed: ${err.message}`))
+  setInterval(() => void poll().catch(err => console.warn(`[threats] Poll failed: ${err.message}`)), 30_000)
+}
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -271,6 +272,7 @@ export function setThreatStatus(id, status) {
   const t = store.get(id)
   if (!t) return null
   t.status = status
+  persistThreats()
   return t
 }
 

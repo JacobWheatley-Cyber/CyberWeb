@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react'
+import { getSessionSecrets, setSessionSecrets } from '../lib/api'
 
 export type Theme = 'midnight' | 'phosphor' | 'obsidian' | 'graphite'
 export type FontSize = 'small' | 'default' | 'large'
@@ -91,17 +92,22 @@ const DEFAULTS: AppSettings = {
 const STORAGE_KEY = 'cyberweb-settings'
 
 function load(): AppSettings {
+  const secrets = getSessionSecrets()
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return DEFAULTS
-    return { ...DEFAULTS, ...JSON.parse(raw) }
+    const saved = raw ? JSON.parse(raw) : {}
+    const { apiKeys: _oldKeys, serverApiKey: _oldServerKey, ...safe } = saved
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(safe))
+    return { ...DEFAULTS, ...safe, apiKeys: { ...DEFAULTS.apiKeys, ...secrets.apiKeys }, serverApiKey: secrets.serverApiKey || '' }
   } catch {
-    return DEFAULTS
+    return { ...DEFAULTS, apiKeys: { ...DEFAULTS.apiKeys, ...secrets.apiKeys }, serverApiKey: secrets.serverApiKey || '' }
   }
 }
 
 function persist(s: AppSettings) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(s))
+  const { apiKeys, serverApiKey, ...safe } = s
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(safe))
+  setSessionSecrets({ apiKeys, serverApiKey })
 }
 
 export function useSettings() {

@@ -2,6 +2,8 @@ import { readFileSync } from 'fs'
 import os from 'os'
 import fs from 'fs/promises'
 import express from 'express'
+import { fileURLToPath } from 'url'
+import { randomUUID } from 'crypto'
 
 // Load .env before anything reads process.env
 try {
@@ -20,24 +22,25 @@ import { promisify } from 'util'
 import { scanTarget } from './scanner.js'
 import { vulnScanTarget } from './vulnScanner.js'
 import { printBanner, logScan, logError } from './banner.js'
-import { getThreats, setThreatStatus, addListener, lastPollTime, dataSources } from './threatMonitor.js'
+import { getThreats, setThreatStatus, addListener, lastPollTime, dataSources, startThreatMonitor } from './threatMonitor.js'
 import { portScan, PORT_PRESETS, parsePortSpec } from './portScanner.js'
 import { SHERLOCK_SITES } from './sherlockSites.js'
 import { analyzeNetworks } from './wirelessAnalyzer.js'
+import { loadLocalJson, saveLocalJson } from './localStore.js'
+import { createPayloadRouter } from './payloadBuilder.js'
 
 const app = express()
 const PORT = 3001
 const execFileAsync = promisify(execFile)
-const REPO_ROOT = process.cwd()
+const REPO_ROOT = fileURLToPath(new URL('../', import.meta.url))
 
-app.use((req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin', '*')
-  res.setHeader('Access-Control-Allow-Methods', 'GET, PATCH, POST, DELETE, OPTIONS')
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-API-Key')
-  if (req.method === 'OPTIONS') return res.sendStatus(204)
+app.disable('x-powered-by')
+app.use('/api', (_req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store')
+  res.setHeader('X-Content-Type-Options', 'nosniff')
   next()
 })
-app.use(express.json())
+app.use(express.json({ limit: '64kb' }))
 
 // ── API key auth ──────────────────────────────────────────────────────────────
 
@@ -48,24 +51,31 @@ if (!API_KEY) {
   console.error('[auth] Example:  CYBERWEB_API_KEY=your-secret-key-here')
   process.exit(1)
 }
+startThreatMonitor()
 
 function requireApiKey(req, res, next) {
-  const provided = req.headers['x-api-key'] || req.query.api_key
+  const provided = req.headers['x-api-key']
   if (provided !== API_KEY) return res.status(401).json({ error: 'Unauthorized' })
   next()
 }
 
+app.use('/api/payloads', createPayloadRouter(requireApiKey))
+
 // ── Server-side state ─────────────────────────────────────────────────────────
 
-const activityLog = []
+const restoredActivity = loadLocalJson('activity.json', [])
+const activityLog = (Array.isArray(restoredActivity) ? restoredActivity : []).slice(0, 100)
 const activeScans = new Map()
+const MAX_ACTIVE_SCANS = 2
 let scanIdCounter = 0
 let totalScansRun = 0
 const serverStart = Date.now()
 
 function addActivity(entry) {
-  activityLog.unshift({ id: Date.now().toString(), ...entry, timestamp: new Date().toISOString() })
-  if (activityLog.length > 20) activityLog.pop()
+  activityLog.unshift({ id: randomUUID(), ...entry, timestamp: new Date().toISOString() })
+  if (activityLog.length > 100) activityLog.pop()
+  try { saveLocalJson('activity.json', activityLog) }
+  catch (err) { console.warn(`[activity] Could not save local history: ${err.message}`) }
 }
 
 // Git checkpoint helper
@@ -90,6 +100,35 @@ async function isGitRepo() {
   } catch {
     return false
   }
+}
+
+function validateBranch(branch) {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,100}$/.test(branch) ||
+      branch.includes('..') || branch.includes('//') || branch.endsWith('/') || branch.endsWith('.lock'))
+    throw new Error('Invalid branch name')
+  return branch
+}
+
+function validateRemoteUrl(url) {
+  if (!url) return
+  if (/^git@github\.com:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?$/.test(url)) return
+  if (/^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?\/?$/.test(url)) return
+  throw new Error('Only GitHub HTTPS or SSH repository URLs are accepted')
+}
+
+async function switchBranch(branch) {
+  const target = validateBranch(branch)
+  const current = (await git(['branch', '--show-current']).catch(() => ({ stdout: '' }))).stdout
+  if (current === target) return
+  const exists = await git(['show-ref', '--verify', '--quiet', `refs/heads/${target}`]).then(() => true, () => false)
+  await git(exists ? ['switch', target] : ['switch', '-c', target])
+}
+
+function sensitiveCheckpointPath(path) {
+  const value = path.replace(/\\/g, '/').toLowerCase()
+  const name = value.split('/').pop()
+  return (name === '.env' || (name.startsWith('.env.') && name !== '.env.example') ||
+    /\.(pem|p12|pfx|key|keystore)$/.test(name) || /^id_(rsa|dsa|ecdsa|ed25519)$/.test(name))
 }
 
 function parseShortStatus(raw) {
@@ -211,6 +250,8 @@ function getCpuPercent() {
 // ── SSE helper ────────────────────────────────────────────────────────────────
 
 function sseHandler(res, fn) {
+  const controller = new AbortController()
+  res.on('close', () => controller.abort())
   res.setHeader('Content-Type', 'text/event-stream')
   res.setHeader('Cache-Control', 'no-cache')
   res.setHeader('Connection', 'keep-alive')
@@ -220,8 +261,9 @@ function sseHandler(res, fn) {
     if (!res.writableEnded) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
   }
 
-  fn(send)
+  fn(send, controller.signal)
     .catch(err => {
+      if (controller.signal.aborted) return
       const msg = err instanceof Error ? err.message : String(err)
       logError(msg)
       send('scan_error', { message: msg })
@@ -232,21 +274,23 @@ function sseHandler(res, fn) {
 // ── Network recon ─────────────────────────────────────────────────────────────
 
 app.get('/api/scan', requireApiKey, (req, res) => {
+  if (activeScans.size >= MAX_ACTIVE_SCANS) return res.status(429).json({ error: 'Scan limit reached; wait for an active scan to finish.' })
   const { target, mode = 'Standard' } = req.query
   if (!target || typeof target !== 'string')
     return res.status(400).json({ error: 'target is required' })
 
   const scanId = ++scanIdCounter
   const modeStr = typeof mode === 'string' ? mode : 'Standard'
-  totalScansRun++
   activeScans.set(scanId, { name: 'Network Recon', target, startTime: Date.now() })
   res.on('close', () => activeScans.delete(scanId))
 
-  logScan('recon', target, modeStr, 'start')
-
-  sseHandler(res, send => {
+  sseHandler(res, (send, signal) => {
     const intercepted = (event, data) => {
       send(event, data)
+      if (event === 'start') {
+        totalScansRun++
+        logScan('recon', target, modeStr, 'start')
+      }
       if (event === 'complete') {
         activeScans.delete(scanId)
         logScan('recon', target, modeStr, 'complete', `${data.total} hosts`)
@@ -257,28 +301,30 @@ app.get('/api/scan', requireApiKey, (req, res) => {
         })
       }
     }
-    return scanTarget(target, modeStr, intercepted)
+    return scanTarget(target, modeStr, intercepted, signal)
   })
 })
 
 // ── Vulnerability scan ────────────────────────────────────────────────────────
 
 app.get('/api/vuln-scan', requireApiKey, (req, res) => {
+  if (activeScans.size >= MAX_ACTIVE_SCANS) return res.status(429).json({ error: 'Scan limit reached; wait for an active scan to finish.' })
   const { target, mode = 'Standard' } = req.query
   if (!target || typeof target !== 'string')
     return res.status(400).json({ error: 'target is required' })
 
   const scanId = ++scanIdCounter
   const modeStr = typeof mode === 'string' ? mode : 'Standard'
-  totalScansRun++
   activeScans.set(scanId, { name: 'Vuln Scanner', target, startTime: Date.now() })
   res.on('close', () => activeScans.delete(scanId))
 
-  logScan('vuln', target, modeStr, 'start')
-
-  sseHandler(res, send => {
+  sseHandler(res, (send, signal) => {
     const intercepted = (event, data) => {
       send(event, data)
+      if (event === 'start') {
+        totalScansRun++
+        logScan('vuln', target, modeStr, 'start')
+      }
       if (event === 'complete') {
         activeScans.delete(scanId)
         logScan('vuln', target, modeStr, 'complete', `${data.hostsScanned} hosts · ${data.findingsTotal} findings`)
@@ -291,13 +337,14 @@ app.get('/api/vuln-scan', requireApiKey, (req, res) => {
         })
       }
     }
-    return vulnScanTarget(target, modeStr, intercepted)
+    return vulnScanTarget(target, modeStr, intercepted, signal)
   })
 })
 
 // ── Port Scanner ──────────────────────────────────────────────────────────────
 
 app.get('/api/port-scan', requireApiKey, (req, res) => {
+  if (activeScans.size >= MAX_ACTIVE_SCANS) return res.status(429).json({ error: 'Scan limit reached; wait for an active scan to finish.' })
   const { target, ports, mode, timeout } = req.query
   if (!target || typeof target !== 'string')
     return res.status(400).json({ error: 'target is required' })
@@ -309,15 +356,16 @@ app.get('/api/port-scan', requireApiKey, (req, res) => {
   const timeoutMs = Math.min(Math.max(parseInt(timeout) || 1000, 300), 5000)
 
   const scanId = ++scanIdCounter
-  totalScansRun++
   activeScans.set(scanId, { name: 'Port Scanner', target, startTime: Date.now() })
   res.on('close', () => activeScans.delete(scanId))
 
-  logScan('ports', target, mode || 'custom', 'start')
-
-  sseHandler(res, send => {
+  sseHandler(res, (send, signal) => {
     const intercepted = (event, data) => {
       send(event, data)
+      if (event === 'start') {
+        totalScansRun++
+        logScan('ports', target, mode || 'custom', 'start')
+      }
       if (event === 'complete') {
         activeScans.delete(scanId)
         logScan('ports', target, mode || 'custom', 'complete', `${data.open} open / ${data.total} ports`)
@@ -329,7 +377,7 @@ app.get('/api/port-scan', requireApiKey, (req, res) => {
         })
       }
     }
-    return portScan(target, portSpec, intercepted, timeoutMs)
+    return portScan(target, portSpec, intercepted, timeoutMs, signal)
   })
 })
 
@@ -353,7 +401,7 @@ app.get('/api/threats/stream', requireApiKey, (req, res) => {
 
 app.patch('/api/threats/:id/status', requireApiKey, (req, res) => {
   const { status } = req.body
-  const valid = ['active', 'blocked', 'monitoring', 'investigating', 'resolved']
+  const valid = ['active', 'acknowledged', 'monitoring', 'investigating', 'resolved']
   if (!valid.includes(status)) return res.status(400).json({ error: 'invalid status' })
   const threat = setThreatStatus(req.params.id, status)
   if (!threat) return res.status(404).json({ error: 'not found' })
@@ -362,7 +410,7 @@ app.patch('/api/threats/:id/status', requireApiKey, (req, res) => {
 
 // ── Health & activity ─────────────────────────────────────────────────────────
 
-app.get('/api/health', async (req, res) => {
+app.get('/api/health', requireApiKey, async (req, res) => {
   const cpu = await getCpuPercent()
   const memPct = Math.round((1 - os.freemem() / os.totalmem()) * 100)
   res.json({
@@ -396,13 +444,14 @@ app.post('/api/checkpoint/init', requireApiKey, async (req, res) => {
   const steps = []
 
   try {
+    validateRemoteUrl(remoteUrl.trim())
     if (!(await isGitRepo())) {
       await git(['init'])
       steps.push('Initialized Git repository')
     }
 
     if (branch?.trim()) {
-      await git(['checkout', '-B', branch.trim()])
+      await switchBranch(branch.trim())
       steps.push(`Checked out ${branch.trim()}`)
     }
 
@@ -432,27 +481,35 @@ app.post('/api/checkpoint/init', requireApiKey, async (req, res) => {
 app.post('/api/checkpoint/run', requireApiKey, async (req, res) => {
   const {
     message = '',
-    push = true,
+    push = false,
     remote = 'origin',
     branch = 'main',
-    initIfNeeded = true,
     remoteUrl = '',
     protectGenerated = true,
     pushStrategy = 'normal', // 'normal' | 'rebase' | 'force'
+    expectedChanges,
   } = req.body || {}
   const steps = []
 
   try {
-    if (!(await isGitRepo())) {
-      if (!initIfNeeded) return res.status(400).json({ error: 'This folder is not a Git repository', steps })
-      await git(['init'])
-      steps.push('Initialized Git repository')
-    }
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,50}$/.test(remote)) throw new Error('Invalid remote name')
+    if (!['normal', 'rebase', 'force'].includes(pushStrategy)) throw new Error('Invalid push strategy')
+    validateRemoteUrl(remoteUrl.trim())
+    if (!(await isGitRepo()))
+      return res.status(400).json({ error: 'Initialize the repository and review its files before checkpointing.', steps })
 
     const branchResult = await git(['branch', '--show-current']).catch(() => ({ stdout: '' }))
     const targetBranch = branch?.trim() || branchResult.stdout || 'main'
-    await git(['checkout', '-B', targetBranch])
+    validateBranch(targetBranch)
+    if (branchResult.stdout !== targetBranch)
+      return res.status(409).json({ error: 'Switch branches with Initialize / Connect, then refresh and review files before checkpointing.', steps })
     steps.push(`Using branch ${targetBranch}`)
+
+    const before = await getCheckpointStatus()
+    if (!Array.isArray(expectedChanges) || JSON.stringify(before.changes) !== JSON.stringify(expectedChanges))
+      return res.status(409).json({ error: 'Working tree changed since preview. Refresh status and review files before committing.', steps })
+    const sensitive = before.changes.map(change => change.path).filter(sensitiveCheckpointPath)
+    if (sensitive.length) throw new Error(`Refusing to stage potential secret files: ${sensitive.join(', ')}`)
 
     if (protectGenerated) {
       const ignored = await ensureGitignore()
@@ -474,6 +531,8 @@ app.post('/api/checkpoint/run', requireApiKey, async (req, res) => {
     steps.push('Staged working tree')
 
     const staged = (await git(['diff', '--cached', '--name-only'])).stdout
+    const stagedSecrets = staged.split('\n').filter(Boolean).filter(sensitiveCheckpointPath)
+    if (stagedSecrets.length) throw new Error(`Refusing to commit potential secret files: ${stagedSecrets.join(', ')}`)
     let commit = null
     if (staged) {
       const cleanMessage = message.trim() || `Checkpoint ${new Date().toLocaleString('en-US')}`
@@ -493,6 +552,8 @@ app.post('/api/checkpoint/run', requireApiKey, async (req, res) => {
       if (!remotes.includes(remote)) {
         steps.push(`Skipped push: ${remote} remote is not configured`)
       } else {
+        const configuredUrl = (await git(['remote', 'get-url', remote])).stdout
+        validateRemoteUrl(configuredUrl)
         if (pushStrategy === 'rebase') {
           await git(['pull', '--rebase', remote, targetBranch], { timeout: 60000 })
           steps.push(`Pulled and rebased from ${remote}/${targetBranch}`)
@@ -680,31 +741,175 @@ const SHERLOCK_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.3
 const SHERLOCK_TIMEOUT = 8000
 const SHERLOCK_BATCH = 20
 
+// ── Headless browser pool ─────────────────────────────────────────────────────
+// Used for phase-2 verification: renders JS SPAs and checks actual visible content.
+
+let _browser = null
+const BROWSER_CONCURRENCY = 4
+let _browserSlots = BROWSER_CONCURRENCY
+const _browserQueue = []
+
+async function getBrowser() {
+  if (!_browser) {
+    const { default: puppeteer } = await import('puppeteer')
+    _browser = await puppeteer.launch({
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+    })
+    _browser.on('disconnected', () => { _browser = null })
+  }
+  return _browser
+}
+
+function acquireSlot() {
+  return new Promise(resolve => {
+    if (_browserSlots > 0) { _browserSlots--; resolve() }
+    else _browserQueue.push(resolve)
+  })
+}
+
+function releaseSlot() {
+  if (_browserQueue.length > 0) _browserQueue.shift()()
+  else _browserSlots++
+}
+
+// Substrings in the final URL that indicate an auth/login wall rather than a true "not found" redirect.
+// When the browser lands here we can't tell if the account exists — return inconclusive.
+const LOGIN_WALL_INDICATORS = [
+  '/login', '/signin', '/sign-in', '/accounts/login', '/account/login',
+  '/challenge', 'oauth/authorize', '/auth/', '/session', '/register',
+]
+
+// Returns { found: boolean|null, reason: string }
+// null = inconclusive (bot block / crash / login wall) — caller keeps the fetch result
+// wasUncertain: true when the site was already flagged as bot-protected by the fetch phase.
+//               These sites redirect headless browsers to login walls routinely even when the
+//               account exists — so a redirect alone must not count as "not found".
+async function browserVerify(url, username, wasUncertain = false) {
+  await acquireSlot()
+  let page = null
+  try {
+    const browser = await getBrowser()
+    page = await browser.newPage()
+    await page.setUserAgent(SHERLOCK_UA)
+    await page.setViewport({ width: 1280, height: 800 })
+
+    // Block heavy assets — we only need text content
+    await page.setRequestInterception(true)
+    page.on('request', req => {
+      if (['image', 'stylesheet', 'font', 'media'].includes(req.resourceType())) req.abort()
+      else req.continue()
+    })
+
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 })
+    await new Promise(r => setTimeout(r, 2500)) // longer settle — gives SPAs time to hydrate
+
+    const finalUrl   = page.url().toLowerCase()
+    const title      = (await page.title()).toLowerCase()
+    const bodyText   = await page.evaluate(() => (document.body?.innerText ?? '').slice(0, 8000))
+    const outerHtml  = await page.evaluate(() => (document.documentElement?.outerHTML ?? '').slice(0, 12000))
+    const uname      = username.toLowerCase()
+    const combined   = `${title} ${bodyText} ${outerHtml}`.toLowerCase()
+
+    // ── Login / auth wall ─────────────────────────────────────────────────────
+    // Headless Chrome often triggers bot protection that redirects to login pages
+    // even when the account exists. We can't determine existence — stay inconclusive.
+    if (LOGIN_WALL_INDICATORS.some(i => finalUrl.includes(i))) {
+      return { found: null, reason: 'login_wall' }
+    }
+
+    // ── JS redirect ───────────────────────────────────────────────────────────
+    // The server moved us away from the profile URL after JS ran.
+    if (!finalUrl.includes(uname)) {
+      // For originally-uncertain (bot-protected) sites, a redirect is ambiguous — stay inconclusive.
+      if (wasUncertain) return { found: null, reason: 'uncertain_redirect' }
+      return { found: false, reason: 'js_redirect' }
+    }
+
+    // ── Content checks (apply to all remaining cases) ─────────────────────────
+    // Prominent 404 in rendered title or visible body top
+    if (/\b404\b/.test(title) || /\b404\b/.test(bodyText.slice(0, 300)))
+      return { found: false, reason: '404_visible' }
+
+    // Stale patterns in fully-rendered content (catches JS-rendered error messages)
+    if (STALE_PATTERNS.some(p => combined.includes(p)))
+      return { found: false, reason: 'stale_pattern' }
+
+    // Username must appear somewhere in the rendered page
+    if (!combined.includes(uname))
+      return { found: false, reason: 'no_username' }
+
+    return { found: true, reason: 'verified' }
+  } catch {
+    return { found: null, reason: 'error' }
+  } finally {
+    if (page) await page.close().catch(() => {})
+    releaseSlot()
+  }
+}
+
 // Patterns that indicate "not found" even when HTTP status is 200.
 // Checked case-insensitively against first 10KB of body for all sites.
 const STALE_PATTERNS = [
-  "sorry, this page isn't available",           // Instagram
-  "this account doesn't exist",                 // Twitter/X variants
-  "page not found",
+  // Account / profile missing
+  "sorry, this page isn't available",
+  "this account doesn't exist",
+  "this profile doesn't exist",
+  "account not found",
   "user not found",
   "profile not found",
-  "account not found",
   "couldn't find this account",
   "we couldn't find that user",
-  "this channel doesn't exist",
-  "the page you requested was not found",
-  "sorry, that page doesn't exist",
-  "this page doesn't exist",
-  "oops! that page can't be found",
-  "sorry, we can't find the page",
-  "hmm...this page doesn't exist",
-  "the link you followed may be broken",        // Instagram error body
+  "the requested user was not found",
   "no such user",
   "no users found",
+  "there is no user",
+  "this user does not exist",
+  "user doesn't exist",
+  // Page / URL missing
+  "page not found",
+  "this page doesn't exist",
+  "this page isn't available",
+  "this page is unavailable",
+  "the page you requested was not found",
+  "the page you're looking for doesn't exist",
+  "sorry, that page doesn't exist",
+  "sorry, we can't find the page",
+  "we can't find this page",
+  "couldn't find this page",
+  "hmm...this page doesn't exist",
+  "oops! that page can't be found",
+  "looks like this page doesn't exist",
+  "the link you followed may be broken",
+  "this channel doesn't exist",
   "404 not found",
+  // Title-based (HTML <title> tag)
   "<title>error</title>",
   "<title>not found</title>",
   "<title>page not found</title>",
+  "<title>404</title>",
+  "<title>user not found</title>",
+  "<title>profile not found</title>",
+  // Redirect to auth pages (followed redirects can land here)
+  "<title>sign up</title>",
+  "<title>signup</title>",
+  "<title>log in</title>",
+  "<title>login</title>",
+  "<title>register</title>",
+  "<title>create an account</title>",
+  // Specific platform patterns
+  "this account has been suspended",
+  "this account has been deactivated",
+  "this content isn't available right now",
+  // Link-in-bio and identity platform errors
+  "can't seem to find a bio",
+  "well that was unexpected",
+  "we couldn't find this page",
+  "this page is no longer available",
+  "this profile has been removed",
+  "no profile found",
+  "this user hasn't set up",
+  "we couldn't find what you were looking for",
 ]
 
 async function readPartialBody(res, maxBytes = 10000) {
@@ -766,28 +971,57 @@ async function checkSite(site, username) {
     }
 
     if (res.status === 200) {
+      // ── Layer 1: Redirect guard ────────────────────────────────────────────────
+      // If the server redirected us away from the profile URL (to /login, /, /signup,
+      // or a generic 404 page), the username will have disappeared from the final URL.
+      // This catches the most common false-positive pattern without reading the body.
+      if (!site.skipRedirectCheck) {
+        const finalUrl = res.url.toLowerCase()
+        if (!finalUrl.includes(username.toLowerCase())) {
+          return { ...site, url: displayUrl, found: false, responseTime, httpStatus: res.status }
+        }
+      }
+
       const body = await readPartialBody(res)
 
+      // ── API-specific handling ─────────────────────────────────────────────────
       // Some APIs (Hacker News) return literal "null" for missing users
       if (site.apiUrl && body.trim() === 'null') {
         return { ...site, url: displayUrl, found: false, responseTime, httpStatus: res.status }
       }
-
-      // API check passed — user data was returned
+      // API check passed — user data was returned in the JSON body
       if (site.apiUrl) {
         return { ...site, url: displayUrl, found: true, responseTime, httpStatus: res.status }
       }
 
-      // HTML check: site-specific error message
+      // ── Layer 2: HTML content checks ──────────────────────────────────────────
+      // Site-specific error message
       if (site.errorType === 'message' && site.errorMsg) {
         if (body.toLowerCase().includes(site.errorMsg.toLowerCase())) {
           return { ...site, url: displayUrl, found: false, responseTime, httpStatus: res.status }
         }
       }
 
-      // Generic stale page detection
+      // Generic stale page detection (title tags, "not found" phrases, auth page titles)
       if (isStale(body)) {
         return { ...site, url: displayUrl, found: false, responseTime, httpStatus: res.status }
+      }
+
+      // ── Layer 3: Size guard ───────────────────────────────────────────────────
+      // A real profile page is never < 500 bytes. Tiny responses are either a
+      // JSON stub or a minimally-rendered error page we missed above.
+      if (body.length < 500) {
+        return { ...site, url: displayUrl, found: false, responseTime, httpStatus: res.status }
+      }
+
+      // ── Layer 4: Username presence check (status_code sites only) ─────────────
+      // For sites that only rely on HTTP status, additionally verify that the
+      // username string appears somewhere in the page content. Skipped for sites
+      // where SSR may not inline the username (SPAs, heavy client rendering).
+      if (site.errorType === 'status_code' && !site.skipPresenceCheck) {
+        if (!body.toLowerCase().includes(username.toLowerCase())) {
+          return { ...site, url: displayUrl, found: false, responseTime, httpStatus: res.status }
+        }
       }
 
       return { ...site, url: displayUrl, found: true, responseTime, httpStatus: res.status }
@@ -807,24 +1041,48 @@ app.get('/api/sherlock', requireApiKey, (req, res) => {
   if (!/^[a-zA-Z0-9._\-]{1,50}$/.test(username))
     return res.status(400).json({ error: 'invalid username' })
 
-  sseHandler(res, async (send) => {
+  sseHandler(res, async (send, signal) => {
     send('start', { total: SHERLOCK_SITES.length, username })
 
+    // Phase 1: fast fetch-based checks (batched, streamed live)
+    const fetchResults = []
     for (let i = 0; i < SHERLOCK_SITES.length; i += SHERLOCK_BATCH) {
+      if (signal.aborted) return
       const batch = SHERLOCK_SITES.slice(i, i + SHERLOCK_BATCH)
-      const results = await Promise.all(batch.map(site => checkSite(site, username)))
-      for (const result of results) {
-        send('result', result)
+      const batchResults = await Promise.all(batch.map(site => checkSite(site, username)))
+      if (signal.aborted) return
+      for (const r of batchResults) {
+        send('result', r)
+        fetchResults.push(r)
       }
     }
 
-    send('complete', { username, total: SHERLOCK_SITES.length })
+    // Phase 2: headless browser verification of all positive + uncertain results.
+    // The browser renders JS, follows client-side redirects, and checks visible text.
+    const toVerify = fetchResults.filter(r => r.found || r.uncertain)
+    if (toVerify.length > 0) {
+      send('verify_start', { total: toVerify.length })
+      await Promise.all(toVerify.map(async (result) => {
+        if (signal.aborted) return
+        const vr = await browserVerify(result.url, username, result.uncertain === true)
+        if (signal.aborted) return
+        send('verify_result', {
+          ...result,
+          found:           vr.found ?? result.found,
+          uncertain:       vr.found === null ? result.uncertain : false,
+          browserVerified: vr.found !== null,
+          verifyReason:    vr.reason,
+        })
+      }))
+    }
+
+    if (!signal.aborted) send('complete', { username, total: SHERLOCK_SITES.length })
   })
 })
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
-app.listen(PORT, () => {
+app.listen(PORT, '127.0.0.1', () => {
   if (process.env.NO_BANNER === '1') {
     process.stdout.write('SERVER_READY\n')
   } else {

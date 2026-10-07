@@ -8,7 +8,7 @@ import {
 import { apiFetch } from '../../lib/api'
 import { generateHTMLReport } from '../../lib/wirelessReport'
 
-const API = 'http://localhost:3001'
+const API = ''
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -451,7 +451,7 @@ export function WirelessAnalyzer() {
               </span>
             </div>
             <p className="text-sm text-slate-400 mt-1 max-w-xl leading-relaxed">
-              Scan nearby WiFi networks and analyze each one for security vulnerabilities with attack chains and step-by-step remediation guides.
+              Passive inventory of nearby WiFi advertisements with heuristic observations. Confirm network ownership and configuration before acting on a finding.
             </p>
           </div>
         </div>
@@ -524,7 +524,7 @@ export function WirelessAnalyzer() {
                 ) : (
                   <span className="flex items-center gap-2 text-emerald-400">
                     <CheckCircle2 size={13} />
-                    All {networks.length} network{networks.length !== 1 ? 's' : ''} passed security checks
+                    No heuristic flags; this scan does not verify network security
                   </span>
                 )}
               </div>

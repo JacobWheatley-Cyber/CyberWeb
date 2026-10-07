@@ -6,19 +6,24 @@ import {
   Activity, Globe, Search, AlertCircle, Loader2, Shield,
 } from 'lucide-react'
 import { SavedTargets } from '../../components/SavedTargets'
-import { apiUrl } from '../../lib/api'
+import { ApiEventSource, describeApiError } from '../../lib/api'
+import { csvRow } from '../../lib/csv'
 import type { ScanHost } from '../../types'
+import { useNavigate } from 'react-router-dom'
 
 interface PortResult {
   port: number
   status: 'open' | 'closed' | 'filtered'
   service: string
+  serviceSource?: string
   banner: string
 }
 
 interface FullHost extends ScanHost {
   allPorts: PortResult[]
   banners: Record<number, string>
+  discovery?: string
+  ttl?: number | null
 }
 
 const PORT_STATUS_STYLE = {
@@ -28,6 +33,7 @@ const PORT_STATUS_STYLE = {
 }
 
 function ScanRow({ host, index }: { host: FullHost; index: number }) {
+  const navigate = useNavigate()
   const [expanded, setExpanded] = useState(false)
   const openPorts = host.allPorts?.filter(p => p.status === 'open') ?? []
   const closedPorts = host.allPorts?.filter(p => p.status === 'closed') ?? []
@@ -73,7 +79,7 @@ function ScanRow({ host, index }: { host: FullHost; index: number }) {
             'text-[11px] font-medium px-2 py-0.5 rounded-full border uppercase tracking-wider',
             host.status === 'up' ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20' : 'text-slate-600 bg-wire-1 border-wire-2',
           )}>
-            {host.status}
+            {host.status === 'down' ? 'No response' : 'Responsive'}
           </span>
           {!isDown && (
             <motion.div animate={{ rotate: expanded ? 180 : 0 }} transition={{ duration: 0.2 }}>
@@ -99,7 +105,7 @@ function ScanRow({ host, index }: { host: FullHost; index: number }) {
                 {[
                   { label: 'IP Address', val: host.ip },
                   { label: 'Hostname', val: host.hostname || '—' },
-                  { label: 'OS Guess', val: host.os },
+                  { label: 'Discovery', val: host.discovery || 'unknown' },
                   { label: 'Ports Scanned', val: host.allPorts?.length ?? 0 },
                 ].map(r => (
                   <div key={r.label}>
@@ -125,7 +131,7 @@ function ScanRow({ host, index }: { host: FullHost; index: number }) {
                         <span className={clsx('text-[11px] px-1.5 py-0.5 rounded border uppercase tracking-wider font-medium flex-shrink-0', PORT_STATUS_STYLE[p.status])}>
                           {p.status}
                         </span>
-                        <span className="text-[11px] text-slate-500 truncate">{p.service || '—'}</span>
+                        <span className="text-[11px] text-slate-500 truncate">{p.service || '—'}{p.status === 'open' && p.serviceSource ? ` (${p.serviceSource})` : ''}</span>
                       </div>
                     </div>
                   ))}
@@ -158,17 +164,11 @@ function ScanRow({ host, index }: { host: FullHost; index: number }) {
               <div>
                 <div className="text-[11px] font-semibold text-slate-600 uppercase tracking-wider mb-2">Quick Actions</div>
                 <div className="flex flex-wrap gap-2">
-                  <button className="flex items-center gap-1.5 text-[12px] px-3 py-1.5 rounded-md border border-wire-2 text-slate-400 hover:text-blue-400 hover:border-blue-500/30 transition-colors">
+                  <button onClick={() => navigate(`/tools/port-scanner?target=${encodeURIComponent(host.ip)}`)} className="flex items-center gap-1.5 text-[12px] px-3 py-1.5 rounded-md border border-wire-2 text-slate-400 hover:text-blue-400 hover:border-blue-500/30 transition-colors">
                     <Network size={12} /> Port scan
                   </button>
-                  <button className="flex items-center gap-1.5 text-[12px] px-3 py-1.5 rounded-md border border-wire-2 text-slate-400 hover:text-rose-400 hover:border-rose-500/30 transition-colors">
+                  <button onClick={() => navigate(`/tools/vuln-scanner?target=${encodeURIComponent(host.ip)}`)} className="flex items-center gap-1.5 text-[12px] px-3 py-1.5 rounded-md border border-wire-2 text-slate-400 hover:text-rose-400 hover:border-rose-500/30 transition-colors">
                     <Activity size={12} /> Vuln scan
-                  </button>
-                  <button className="flex items-center gap-1.5 text-[12px] px-3 py-1.5 rounded-md border border-wire-2 text-slate-400 hover:text-slate-200 transition-colors">
-                    <Globe size={12} /> Web scan
-                  </button>
-                  <button className="flex items-center gap-1.5 text-[12px] px-3 py-1.5 rounded-md border border-wire-2 text-slate-400 hover:text-purple-400 hover:border-purple-500/30 transition-colors">
-                    <Shield size={12} /> Check vulns
                   </button>
                 </div>
               </div>
@@ -181,7 +181,7 @@ function ScanRow({ host, index }: { host: FullHost; index: number }) {
 }
 
 export function NetworkRecon() {
-  const [target, setTarget] = useState('')
+  const [target, setTarget] = useState(() => new URLSearchParams(window.location.search).get('target') || '')
   const [mode, setMode] = useState('Standard')
   const [running, setRunning] = useState(false)
   const [scanStarted, setScanStarted] = useState(false)
@@ -192,7 +192,7 @@ export function NetworkRecon() {
   const [filter, setFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | 'up' | 'down'>('all')
 
-  const esRef = useRef<EventSource | null>(null)
+  const esRef = useRef<ApiEventSource | null>(null)
   const startTimeRef = useRef(0)
   const completedRef = useRef(false)
 
@@ -221,7 +221,7 @@ export function NetworkRecon() {
     startTimeRef.current = Date.now()
 
     const url = `/api/scan?target=${encodeURIComponent(target.trim())}&mode=${encodeURIComponent(mode)}`
-    const es = new EventSource(apiUrl(url))
+    const es = new ApiEventSource(url)
     esRef.current = es
 
     es.addEventListener('start', (e) => {
@@ -248,9 +248,9 @@ export function NetworkRecon() {
       setRunning(false)
       es.close()
     })
-    es.onerror = () => {
+    es.onerror = error => {
       if (completedRef.current) return
-      setError('Could not connect to the API server. Make sure it is running.')
+      setError(describeApiError(error))
       setRunning(false)
       es.close()
     }
@@ -265,13 +265,13 @@ export function NetworkRecon() {
 
   function exportCsv() {
     const rows = [
-      'IP,Hostname,OS,Status,Open Ports,Services,Banners',
-      ...hosts.map(h => [
-        h.ip, h.hostname, h.os, h.status,
+      'IP,Hostname,Discovery,Status,Open Ports,Services,Banners',
+      ...hosts.map(h => csvRow([
+        h.ip, h.hostname, h.discovery || '', h.status,
         h.ports.join(' '),
         h.services.join(' '),
-        `"${Object.entries(h.banners ?? {}).map(([p, b]) => `${p}: ${b.replace(/"/g, "'")}`).join(' | ')}"`,
-      ].join(',')),
+        Object.entries(h.banners ?? {}).map(([p, b]) => `${p}: ${b}`).join(' | '),
+      ])),
     ]
     const blob = new Blob([rows.join('\n')], { type: 'text/csv' })
     const a = document.createElement('a')
@@ -280,7 +280,7 @@ export function NetworkRecon() {
     a.click()
   }
 
-  const portCounts = mode === 'Quick' ? 11 : mode === 'Standard' ? 27 : 37
+  const portCounts = mode === 'Quick' ? 11 : mode === 'Standard' ? 27 : 39
 
   return (
     <div className="min-h-full p-6 space-y-5">
@@ -297,7 +297,7 @@ export function NetworkRecon() {
             </span>
           </div>
           <p className="text-sm text-slate-400 mt-1">
-            Host discovery, full port scan with status, service detection, and banner grabbing.
+            ICMP and TCP host discovery, selected TCP port checks, and bounded service probes.
           </p>
         </div>
       </motion.div>
@@ -425,7 +425,7 @@ export function NetworkRecon() {
                     <button key={s} onClick={() => setStatusFilter(s)}
                       className={clsx('px-2.5 py-1.5 rounded text-[11px] font-medium capitalize border transition-all',
                         statusFilter === s ? 'bg-slate-700/50 text-slate-200 border-slate-600' : 'text-slate-500 border-wire-2 hover:text-slate-300')}>
-                      {s}
+                      {s === 'down' ? 'No response' : s}
                     </button>
                   ))}
                 </div>
@@ -443,7 +443,7 @@ export function NetworkRecon() {
               <div className="w-32 flex-shrink-0 text-[11px] text-slate-600 uppercase tracking-wider">IP</div>
               <div className="flex-1 text-[11px] text-slate-600 uppercase tracking-wider">Hostname</div>
               <div className="hidden md:block w-56 flex-shrink-0 text-[11px] text-slate-600 uppercase tracking-wider">Open Ports</div>
-              <div className="hidden lg:block w-36 flex-shrink-0 text-[11px] text-slate-600 uppercase tracking-wider">OS</div>
+              <div className="hidden lg:block w-36 flex-shrink-0 text-[11px] text-slate-600 uppercase tracking-wider">OS identification</div>
               <div className="flex-shrink-0 w-24 text-right text-[11px] text-slate-600 uppercase tracking-wider">Status</div>
             </div>
 
@@ -458,7 +458,7 @@ export function NetworkRecon() {
                 <div className="py-10 text-center text-slate-600 text-sm">No hosts match the current filter.</div>
               )}
               {!running && hosts.length === 0 && scanStarted && (
-                <div className="py-10 text-center text-slate-600 text-sm">No hosts responded to ping.</div>
+                <div className="py-10 text-center text-slate-600 text-sm">No target responded to ICMP or TCP discovery probes.</div>
               )}
             </div>
           </div>

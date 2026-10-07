@@ -60,7 +60,7 @@ export interface ThreatEntry {
   mitre?: string[]
   geo?: ThreatGeo
   reputation?: ThreatReputation
-  status: 'active' | 'blocked' | 'monitoring' | 'investigating' | 'resolved'
+  status: 'active' | 'acknowledged' | 'monitoring' | 'investigating' | 'resolved'
   notes?: string
   source_label?: string
 }

@@ -246,6 +246,23 @@ export function Settings() {
   const [activeTab, setActiveTab] = useState('general')
   const [saved, setSaved] = useState(false)
   const [confirmReset, setConfirmReset] = useState(false)
+  const [apiTest, setApiTest] = useState('')
+
+  async function testApiConnection() {
+    setApiTest('Checking…')
+    try {
+      const headers: Record<string, string> = {}
+      if (settings.serverApiKey) headers['X-API-Key'] = settings.serverApiKey
+      const response = await fetch('/api/health', { headers, cache: 'no-store' })
+      if (response.ok) {
+        const health = await response.json()
+        setApiTest(typeof health.uptimeSeconds === 'number' ? 'Connected: API key accepted.' : 'The endpoint did not return a CyberWeb health response.')
+      } else setApiTest(response.status === 401 ? 'API server is running, but this key was rejected.'
+        : `API request failed (HTTP ${response.status}). Check the CyberWeb terminal.`)
+    } catch {
+      setApiTest('Cannot reach the API server. Check the CyberWeb terminal.')
+    }
+  }
 
   function flashSaved() {
     setSaved(true)
@@ -346,7 +363,7 @@ export function Settings() {
                         ]}
                       />
                     </Field>
-                    <Field label="Session Timeout" hint="Auto-lock after this period of inactivity">
+                    <Field label="Inactivity overlay" hint="Hides the interface until resumed; this is not an authentication lock">
                       <Select<SessionTimeout>
                         value={settings.sessionTimeout}
                         onChange={v => handleUpdate('sessionTimeout', v)}
@@ -359,27 +376,10 @@ export function Settings() {
                         ]}
                       />
                     </Field>
-                    <Field label="Auto-update signatures" hint="Keep CVE rules current on startup">
-                      <Toggle checked={settings.autoUpdate} onChange={() => handleUpdate('autoUpdate', !settings.autoUpdate)} />
-                    </Field>
-                    <Field label="Anonymous diagnostics" hint="Help improve CyberWeb with anonymized data">
-                      <Toggle checked={settings.crashReports} onChange={() => handleUpdate('crashReports', !settings.crashReports)} />
-                    </Field>
                   </Section>
 
-                  <Section title="Data Retention">
-                    <Field label="Scan results retention">
-                      <Select<string> value={settings.scanRetention} onChange={v => handleUpdate('scanRetention', v)}
-                        options={['30 days','60 days','90 days','1 year','Indefinite'].map(v => ({ value: v, label: v }))} />
-                    </Field>
-                    <Field label="Activity log retention">
-                      <Select<string> value={settings.activityRetention} onChange={v => handleUpdate('activityRetention', v)}
-                        options={['90 days','6 months','1 year','2 years','Indefinite'].map(v => ({ value: v, label: v }))} />
-                    </Field>
-                    <Field label="Alert archive retention">
-                      <Select<string> value={settings.alertRetention} onChange={v => handleUpdate('alertRetention', v)}
-                        options={['6 months','1 year','2 years','Indefinite'].map(v => ({ value: v, label: v }))} />
-                    </Field>
+                  <Section title="Data retention planned">
+                    <p className="text-sm text-slate-400">The last 100 activity entries and up to 1,000 threats from the last 30 days are stored locally. Scan result history and configurable retention are not implemented.</p>
                   </Section>
                 </>
               )}
@@ -421,31 +421,9 @@ export function Settings() {
 
               {/* ── Notifications ── */}
               {activeTab === 'notifications' && (
-                <>
-                  <Section title="Webhooks">
-                    <Field label="Webhook notifications" hint="POST scan results to an endpoint">
-                      <Toggle checked={settings.webhookEnabled} onChange={() => handleUpdate('webhookEnabled', !settings.webhookEnabled)} />
-                    </Field>
-                    <Field label="Webhook URL" hint="Receives a JSON payload on each scan completion">
-                      <TextInput value={settings.webhookUrl} onChange={v => handleUpdate('webhookUrl', v)}
-                        placeholder="https://hooks.example.com/..." />
-                    </Field>
-                  </Section>
-
-                  <Section title="Alert Filtering">
-                    <Field label="Minimum severity" hint="Suppress findings below this level">
-                      <Select<string> value={settings.minSeverity} onChange={v => handleUpdate('minSeverity', v)}
-                        options={['Info','Low','Medium','High','Critical'].map(v => ({ value: v, label: v }))} />
-                    </Field>
-                    <Field label="Critical only" hint="Only surface critical severity findings">
-                      <Toggle checked={settings.criticalOnly} onChange={() => handleUpdate('criticalOnly', !settings.criticalOnly)} />
-                    </Field>
-                    <Field label="Alert digest">
-                      <Select<string> value={settings.alertDigest} onChange={v => handleUpdate('alertDigest', v)}
-                        options={['Real-time','Hourly','Daily','Weekly'].map(v => ({ value: v, label: v }))} />
-                    </Field>
-                  </Section>
-                </>
+                <Section title="Notifications planned">
+                  <p className="text-sm text-slate-400">Webhooks, alert digests, and server-side severity filtering are not implemented yet.</p>
+                </Section>
               )}
 
               {/* ── Security ── */}
@@ -453,54 +431,28 @@ export function Settings() {
                 <>
                   <div className="flex items-start gap-2.5 px-4 py-3 rounded-md bg-amber-500/8 border border-amber-500/20 text-[12px] text-amber-400">
                     <AlertTriangle size={13} className="flex-shrink-0 mt-0.5" />
-                    Authentication settings are stored locally. Full enforcement requires a backend with user management.
+                    User accounts, two-factor authentication, SSO, and role-based access are not implemented. The API currently uses one local key and binds to loopback.
                   </div>
 
-                  <Section title="Authentication">
-                    <Field label="Two-factor authentication" hint="Require a second factor at login">
-                      <Toggle checked={settings.twoFactor} onChange={() => handleUpdate('twoFactor', !settings.twoFactor)} />
-                    </Field>
-                    <Field label="SSO provider">
-                      <Select<string> value={settings.ssoProvider} onChange={v => handleUpdate('ssoProvider', v)}
-                        options={['None','Okta','Azure AD','Google Workspace','SAML 2.0'].map(v => ({ value: v, label: v }))} />
-                    </Field>
-                    <Field label="Password policy">
-                      <Select<string> value={settings.passwordPolicy} onChange={v => handleUpdate('passwordPolicy', v)}
-                        options={[
-                          { value: 'Standard', label: 'Standard' },
-                          { value: 'Strong (12+ chars)', label: 'Strong (12+ chars)' },
-                          { value: 'Strict (16+ chars)', label: 'Strict (16+ chars)' },
-                        ]} />
-                    </Field>
-                  </Section>
-
-                  <Section title="Access Control">
-                    <Field label="IP allowlist" hint="Restrict access to specific IP ranges">
-                      <Toggle checked={settings.ipAllowlist} onChange={() => handleUpdate('ipAllowlist', !settings.ipAllowlist)} />
-                    </Field>
-                    <Field label="Allowed IP ranges" hint="Comma-separated CIDR notation">
-                      <TextInput value={settings.allowedIPs} onChange={v => handleUpdate('allowedIPs', v)}
-                        placeholder="10.0.0.0/8, 192.168.1.0/24"
-                        width={clsx('w-56', !settings.ipAllowlist && 'opacity-40 pointer-events-none')} />
-                    </Field>
-                    <Field label="Audit log" hint="Record all scan and user activity">
-                      <Toggle checked={settings.auditLog} onChange={() => handleUpdate('auditLog', !settings.auditLog)} />
-                    </Field>
-                    <Field label="API access" hint="Allow programmatic access via API endpoints">
-                      <Toggle checked={settings.apiAccess} onChange={() => handleUpdate('apiAccess', !settings.apiAccess)} />
-                    </Field>
+                  <Section title="Local access controls">
+                    <p className="text-sm text-slate-400">Set CYBERWEB_API_KEY in .env and enter it below. Scans accept valid public or private IPv4 targets; network and port scan size limits still apply.</p>
                   </Section>
 
                   <Section title="Server API Key">
                     <Field label="API key" hint="Must match the server's CYBERWEB_API_KEY">
-                      <TextInput
-                        value={settings.serverApiKey}
-                        onChange={v => handleUpdate('serverApiKey', v)}
-                        placeholder="Leave blank if auth is disabled"
-                        type="password"
-                        width="w-72"
-                      />
+                      <div className="flex flex-wrap items-center gap-2">
+                        <TextInput
+                          value={settings.serverApiKey}
+                          onChange={v => { setApiTest(''); handleUpdate('serverApiKey', v) }}
+                          placeholder="Paste the key from .env"
+                          type="password"
+                          width="w-72"
+                        />
+                        <button onClick={testApiConnection} className="px-3 py-1.5 text-xs rounded border border-wire-3 text-slate-300 hover:border-blue-500/40">Test connection</button>
+                      </div>
                     </Field>
+                    {apiTest && <p role="status" className="text-xs text-slate-400">{apiTest}</p>}
+                    <p className="text-xs text-slate-500">The key stays in this browser tab's session storage. Enter it again in a new browser session.</p>
                   </Section>
                 </>
               )}
@@ -509,7 +461,7 @@ export function Settings() {
               {activeTab === 'integrations' && (
                 <Section title="API Keys">
                   <p className="text-[12px] text-slate-500 -mt-1">
-                    Keys are stored in browser local storage. Do not use production secrets in shared browsers.
+                    Keys are kept in this tab's session storage and cleared when the tab session ends.
                   </p>
                   {Object.keys(settings.apiKeys).map(name => (
                     <ApiKeyRow key={name} name={name} value={settings.apiKeys[name]}

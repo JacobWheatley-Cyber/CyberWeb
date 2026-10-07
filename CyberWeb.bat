@@ -1,19 +1,15 @@
 @echo off
 cd /d "%~dp0"
-
-:: Kill anything already on our ports
-for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":5173 " ^| findstr LISTENING 2^>nul') do (
-    taskkill /PID %%a /F >nul 2>&1
-)
-for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":3001 " ^| findstr LISTENING 2^>nul') do (
-    taskkill /PID %%a /F >nul 2>&1
-)
-
-timeout /t 1 /nobreak > nul
+if errorlevel 1 exit /b 1
 
 :: Open one terminal running the unified launcher
-start "CyberWeb" cmd /k "cd /d "%~dp0" && node start.js"
+start "CyberWeb" cmd /k node start.js
 
-:: Give the servers a moment to boot, then open the browser
-timeout /t 6 /nobreak > nul
-start http://localhost:5173
+:: Open the browser only after both local services respond.
+node waitForReady.js
+if errorlevel 1 (
+  echo CyberWeb did not finish starting. Check the CyberWeb terminal for the startup error.
+  pause
+  exit /b 1
+)
+start "" "http://localhost:5173"
